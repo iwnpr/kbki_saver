@@ -1,0 +1,109 @@
+﻿using StackExchange.Redis;
+using System.Diagnostics.CodeAnalysis;
+
+namespace cache_lib.Interfaces
+{
+    public interface ICacheService
+    {
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="methodName"></param>
+        /// <param name="pKey"></param>
+        /// <param name="pField"></param>
+        /// <param name="pData"></param>
+        /// <param name="dbIndex"></param>
+        void AddHash(string methodName, string pKey, string pField, byte[] pData, int? dbIndex = null);
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="methodName"></param>
+        /// <param name="pKey"></param>
+        /// <param name="pField"></param>
+        /// <param name="pData"></param>
+        /// <param name="dbIndex"></param>
+        void AddHash(string methodName, string pKey, string pField, string pData, int? dbIndex = null);
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="redisKey"></param>
+        /// <param name="redisFieldName"></param>
+        /// <param name="dbIndex"></param>
+        /// <returns></returns>
+        bool TryGetHash(string key, string pField, [NotNullWhen(true)] out byte[]? bytes, int? dbIndex = null);
+
+        /// <summary>
+        /// Проверка что ключ существует
+        /// </summary>
+        /// <param name="key">Ключ</param>
+        /// <param name="dbIndex">id бд в редисе</param>
+        /// <returns>Ключ существует</returns>
+        bool KeyExists(string[] keys, int? dbIndex = null);
+
+        Task DeleteKeyExpiration(string key);
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="methodName"></param>
+        /// <param name="key"></param>
+        /// <param name="field"></param>
+        /// <param name="result"></param>
+        /// <returns></returns>
+        bool TryGetIntValue(string methodName, string key, string field, [NotNullWhen(true)] out int result, int? dbIndex = null);
+
+        /// <summary>
+        /// Получить все значения из Hash
+        /// </summary>
+        /// <param name="methodName"></param>
+        /// <param name="pKey"></param>
+        /// <param name="dbIndex"></param>
+        /// <returns></returns>
+        Task<HashEntry[]> TryGetHashAll(string pKey, int? dbIndex = null);
+
+        /// <summary>
+        /// Валидация уникальности requestid в течение календароного дня
+        /// </summary>
+        /// <param name="pKey"></param>
+        /// <param name="requestDate"></param>
+        /// <returns></returns>
+        bool IsUniqueRequestId(string requestId, string ogrn, string methodName, int? dbIndex = null);
+
+        /// <summary>
+        /// Устновка значения уникального request id в рамках организации
+        /// </summary>
+        /// <param name="requestId">Id Запроса</param>
+        /// <param name="inn">ИНН</param>
+        /// <param name="ogrn">ОГРН</param>
+        /// <param name="requestDate">Дата запроса</param>
+        void AddUniqueRequestId(string methodName, string requestId, string ogrn, DateTime? requestDate = null, int? dbIndex = null);
+
+
+        /// <summary>
+        /// Проверить существует ли поле в хэше
+        /// </summary>
+        /// <param name="methodName"></param>
+        /// <param name="requestId"></param>
+        /// <param name="fieldName"></param>
+        /// <returns></returns>
+        Task<bool> HashFieldExists(string pKey, string fieldName);
+
+        /// <summary>
+        /// Установить время жизни записи
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        Task SetKeyExpiration(string key, int expirationInHours);
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="hashKey"></param>
+        /// <param name="fieldKey"></param>
+        /// <returns></returns>
+        Task<int?> GetHashSetValueAsync(string hashKey, string fieldKey);
+    }
+}
