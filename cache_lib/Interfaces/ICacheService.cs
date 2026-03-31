@@ -1,10 +1,13 @@
 ﻿using StackExchange.Redis;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 
 namespace cache_lib.Interfaces
 {
     public interface ICacheService
     {
+        public IDatabase GetDatabase();
+
         /// <summary>
         /// 
         /// </summary>
@@ -95,7 +98,7 @@ namespace cache_lib.Interfaces
         /// </summary>
         /// <param name="key"></param>
         /// <returns></returns>
-        Task SetKeyExpiration(string key, int expirationInHours);
+        Task SetKeyExpirationInMinutes(string key, int expirationInHours);
 
         /// <summary>
         /// 
@@ -104,6 +107,22 @@ namespace cache_lib.Interfaces
         /// <param name="hashKey"></param>
         /// <param name="fieldKey"></param>
         /// <returns></returns>
-        Task<int?> GetHashSetValueAsync(string hashKey, string fieldKey);
+        Task<int> GetIntHashValueAsync(string hashKey, string fieldKey);
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="hashKey"></param>
+        /// <param name="fieldKey"></param>
+        /// <returns></returns>
+        Task<string?> GetStringHashValueAsync(string hashKey, string fieldKey);
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        Task ClearDLRequestHash(string key, HashEntry[] hashset, IEnumerable<string> QBCH);
     }
 }

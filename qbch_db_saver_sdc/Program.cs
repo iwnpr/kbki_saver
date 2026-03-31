@@ -1,11 +1,7 @@
 ﻿using cache_lib.Implementations;
 using cache_lib.Interfaces;
 using Confluent.Kafka;
-using db_lib.DBEntity;
-using db_lib.Entity.CommonTypes.Api;
-using db_lib.Entity.CommonTypes.Xml;
-using db_lib.Entity.qcb_xml.qcb_answer;
-using db_lib.Entity.qcb_xml.qcb_result;
+using db_lib.Entities;
 using db_lib.Services.Implementations;
 using db_lib.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -13,96 +9,218 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using qbch_db_saver_sdc;
+using QBCH_lib.CommonTypes.Api;
 using Serilog;
 using StackExchange.Redis;
-using System.Diagnostics;
-using System.Xml.Serialization;
+using System.ServiceProcess;
+using System.Text;
+using Xml_service_lib;
 
+ThreadPool.SetMinThreads(200, 200);
 
-using IHost host = Host.CreateDefaultBuilder(args).Build();
-//Подключаем файл конфигурации
-IConfiguration _configuration = new ConfigurationBuilder()
-    .AddJsonFile("appsettings.json")
-    .Build();
+//// Сборка хоста приложения
+//var builder = new HostApplicationBuilder(args);
 
-//Внедрение сервисов
-static IServiceProvider ConfigureServices(IConfiguration configuration)
+////Подключаем файл конфигурации
+//IConfiguration configuration = new ConfigurationBuilder()
+//    .AddJsonFile("appsettings.json")
+//    .Build();
+
+//// По умолчанию не подсасывается как в том же WebApplicationBuilder, поэтому добавляем вручную
+//builder.Configuration.AddConfiguration(configuration);
+//var bootstrapServers = builder.Configuration.GetValue<string>("Kafka:BootstrapServers");
+//var errorTopic = builder.Configuration.GetValue<string>("Kafka:ErrorTopic");
+//var topic = builder.Configuration.GetSection("Kafka:Topic").Value;
+
+//// Создание продюсера для перезаписи id в Кафку
+//IProducer<Null, string> producer = new ProducerBuilder<Null, string>(new ProducerConfig
+//{
+//    BootstrapServers = bootstrapServers,
+//    LingerMs = 0,
+//    Acks = Acks.All
+//}).Build();
+
+////ServiceCollection services = new();
+//builder.Services.AddDbContext<qbchContext>(o =>
+//{
+//    o.UseNpgsql(builder.Configuration.GetConnectionString("DataBase"));
+//    //o.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
+//}, ServiceLifetime.Transient);
+//builder.Services.AddTransient<ISaverService>(o => new SaverService(
+//    o.GetRequiredService<ICacheService>(),
+//    o.GetRequiredService<ILogger<SaverService>>(),
+//    producer,
+//    o.GetRequiredService<IRepository>(),
+//    o.GetRequiredService<IConfiguration>(),
+//    errorTopic));
+//builder.Services.AddSingleton<ICacheService, CacheService>();
+//builder.Services.AddSingleton<IXmlService, XmlService>();
+//builder.Services.AddTransient<IRepository, Repository>();
+//builder.Services.AddSingleton<IBKIRequisitsHandler, BKIRequsits>();
+//builder.Logging.ClearProviders();
+//builder.Services.AddLogging(builder => builder.AddSerilog(new LoggerConfiguration().ReadFrom.Configuration(configuration).CreateLogger()));
+//builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")!));
+
+//IServiceProvider ServiceProvider = builder.Services.BuildServiceProvider();
+//ILogger<Program> _logger = ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+//if (string.IsNullOrWhiteSpace(topic))
+//{
+//    _logger.LogError("Topic не заполнен.");
+//    return;
+//}
+
+//if (string.IsNullOrWhiteSpace(errorTopic))
+//{
+//    _logger.LogError("Error_topic не заполнен.");
+//    return;
+//}
+
+//builder.Services.AddAllElasticApm();
+
+//// Добавляем сервис который дернется после запускуа app.Run();
+//builder.Services.AddHostedService<QBCHSaverBackgroundService>();
+
+//var app = builder.Build();
+//app.Run();
+
+if (!Environment.UserInteractive && OperatingSystem.IsWindows())
 {
+    ServiceBase[] ServicesToRun;
+    ServicesToRun = [new QBCHSaverBGService()];
+    ServiceBase.Run(ServicesToRun);
+}
+else
+{
+
+    if (Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") != "true")
+    {
+        // Отключаем в консоли возможность редактирования
+        DisableConsoleQuickEdit.Go();
+    }
+
+    //Подключаем файл конфигурации
+    IConfiguration configuration = new ConfigurationBuilder()
+        .AddJsonFile("appsettings.json")
+        .Build();
+
+    var bootstrapServers = configuration.GetValue<string>("Kafka:BootstrapServers");
+    var topic = configuration.GetSection("Kafka:Topic").Value;
+    var errorTopic = configuration.GetValue<string>("Kafka:ErrorTopic");
+    var eventTopic = configuration.GetValue<string>("Kafka:EventTopic");
+    var groupId = configuration.GetValue<string>("Kafka:GroupId");
+
+
+    if (!bool.TryParse(Environment.GetEnvironmentVariable("ERROR_APP"), out bool isErrorApp))
+        isErrorApp = configuration.GetValue<bool?>("App:IsErrorApp") ?? true;
+
+    Console.Title = isErrorApp ? $"IsError: {isErrorApp} | Topic: {errorTopic} | Event topic: {eventTopic}" : $"IsError: {isErrorApp} | Topic: {topic} | Event topic: {eventTopic}";
+
+    // Конфигурация для подписчика
+    var config = new ConsumerConfig
+    {
+        BootstrapServers = bootstrapServers,
+        GroupId = groupId,
+        EnableAutoCommit = false,
+        SocketKeepaliveEnable = true,
+        AutoOffsetReset = AutoOffsetReset.Earliest,
+    };
+
+    // Создание продюсера для перезаписи id в Кафку
+    IProducer<Null, string> producer = new ProducerBuilder<Null, string>(new ProducerConfig
+    {
+        BootstrapServers = bootstrapServers,
+        LingerMs = 0,
+        RequestTimeoutMs = 10000,
+        Acks = Acks.All
+    }).Build();
+
     ServiceCollection services = new();
     services.AddSingleton(configuration);
-    services.AddDbContext<qbchContext>(o => o.UseNpgsql(configuration.GetConnectionString("DataBase")), contextLifetime: ServiceLifetime.Scoped, optionsLifetime: ServiceLifetime.Scoped);
+    services.AddDbContext<qbchContext>(o =>
+    {
+        o.UseNpgsql(connectionString: configuration.GetConnectionString("DataBase"));
+        //o.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
+    }, ServiceLifetime.Transient);
+    services.AddTransient<ISaverService>(o => new SaverService(
+        o.GetRequiredService<ICacheService>(),
+        o.GetRequiredService<ILogger<SaverService>>(),
+        producer,
+        o.GetRequiredService<IRepository>(),
+        o.GetRequiredService<IConfiguration>(),
+        errorTopic));
+    services.AddScoped<ICacheService, CacheService>();
+    services.AddSingleton<IXmlService, XmlService>();
     services.AddTransient<IRepository, Repository>();
-    services.AddSingleton<ICacheService, CacheService>();
     services.AddSingleton<IBKIRequisitsHandler, BKIRequsits>();
     services.AddLogging(builder => builder.AddSerilog(new LoggerConfiguration().ReadFrom.Configuration(configuration).CreateLogger()));
     services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(configuration.GetConnectionString("Redis")!));
 
-    return services.BuildServiceProvider();
-}
+    IServiceProvider ServiceProvider = services.BuildServiceProvider();
+    ILogger<Program> _logger = ServiceProvider.GetRequiredService<ILogger<Program>>();
 
-IServiceProvider ServiceProvider = ConfigureServices(_configuration);
-ILogger<Program> _logger = ServiceProvider.GetRequiredService<ILogger<Program>>();
-IServiceScopeFactory serviceScopeFactory = ServiceProvider.GetRequiredService<IServiceScopeFactory>();
-IRepository _repository;
-
-var _bootstrapServers = _configuration.GetSection("Kafka:BootstrapServers").Value;
-var _isErrorApp = _configuration.GetValue<bool>("Kafka:IsErrorApp");
-var _topic = _configuration.GetSection("Kafka:Topic").Value;
-var _errorTopic = _configuration.GetSection("Kafka:ErrorTopic").Value;
-var _groupId = _configuration.GetSection("Kafka:GroupId").Value;
-
-_logger.LogWarning("Application started IsErrorApp:{_isErrorApp}", _isErrorApp);
-
-// Конфигурация для подписчика
-var config = new ConsumerConfig
-{
-    BootstrapServers = _bootstrapServers,
-    GroupId = _groupId,
-    EnableAutoCommit = true,
-};
-
-// Создание продюсера для перезаписи id в Кафку
-IProducer<Null, string> _producer = new ProducerBuilder<Null, string>(new ProducerConfig
-{
-    BootstrapServers = _bootstrapServers,
-    LingerMs = 0,
-    Acks = Acks.All
-}).Build();
-
-// Прослушивание кафки
-using (var c = new ConsumerBuilder<Ignore, string>(config).Build())
-{
-    Stopwatch _sw = new();
-    _sw.Start();
-
-    c.Subscribe(_topic);
-    _logger.LogWarning("Subscribe to topic {_topic}", _topic);
-
-    while (true)
+    if (string.IsNullOrWhiteSpace(topic))
     {
-        using var scope = serviceScopeFactory.CreateScope();
-        _sw.Restart();
-        var _st = DateTime.Now;
-        _repository = scope.ServiceProvider.GetRequiredService<IRepository>();
-
-        var cr = c.Consume();
-
-        try
-        {
-            if (_isErrorApp)
-                await _repository.SaveToDBErrorApp(cr.Message.Value);
-            else
-                await _repository.SaveToDB(cr.Message.Value, _producer, _errorTopic);
-        }
-        catch (ConsumeException e)
-        {
-            _logger.LogCritical(e, "Возникла ошибка записи в БД");
-            await _producer.ProduceAsync(_errorTopic, new() { Value = cr.Message.Value });
-        }
-
-        c.Commit(cr);
-        _logger.LogInformation("Saving message '{Message}' start time '{StartTime}' end time '{EndTime}' all time: '{SavingTime}' ms.", cr.Message.Value, _st, DateTime.Now, _sw.ElapsedMilliseconds);
-        _logger.LogWarning("Offset: {offset} Message:{Message}", cr.Offset.Value.ToString(), cr.Message.Value);
+        _logger.LogError("Основной topic не заполнен.");
+        return;
     }
 
+    if (string.IsNullOrWhiteSpace(errorTopic))
+    {
+        _logger.LogError("Error topic не заполнен.");
+        return;
+    }
+
+    _logger.LogWarning("Event Topic установлен в значение {eventTopic}", eventTopic ?? "Null");
+    _logger.LogWarning("Application started IsErrorApp:{_isErrorApp}", isErrorApp);
+
+    if (!int.TryParse(Environment.GetEnvironmentVariable("PARALLEL"), out var ParallelConsumersCount))
+        ParallelConsumersCount = configuration.GetValue<int?>("App:ParallelConsumers") ?? 1;
+
+    _logger.LogWarning("Кол-во подключений к кафке {numberOfPartitions}", ParallelConsumersCount);
+
+    await Parallel.ForAsync(0, ParallelConsumersCount, async (i, ct) =>
+    {
+        CreateConsumerAsync(ServiceProvider, new ConsumerBuilder<Ignore, string>(config).Build());
+    });
+
+    Task CreateConsumerAsync(IServiceProvider serviceProvider, IConsumer<Ignore, string> consumer)
+    {
+        consumer.Subscribe(isErrorApp ? errorTopic : topic);
+        _logger.LogWarning("Subscribe to topic partition {_topic}", isErrorApp ? errorTopic : topic);
+        ConsumeResult<Ignore, string> cr;
+        bool Is500;
+        string key;
+
+        while (true)
+        {
+            IServiceProvider scope = serviceProvider.CreateScope().ServiceProvider;
+            ISaverService _repository = scope.GetRequiredService<ISaverService>();
+            cr = consumer.Consume();
+            key = cr.Message.Value;
+            Is500 = key.Split(':')[0] != "QBCH";
+
+            try
+            {
+                if (Is500)
+                    _repository.SaveCriticalError(key).Wait();
+
+                if (isErrorApp)
+                    _repository.ErrorTopicHandler(key).Wait();
+                else
+                    _repository.TopicHandler(key).Wait();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "Возникла ошибка записи в БД - {key}", key);
+
+                if (!isErrorApp)
+                    producer.ProduceAsync(errorTopic, new() { Value = cr.Message.Value }).Wait();
+            }
+
+            consumer.Commit(cr);
+            _logger.LogWarning("Partition: {prt} Offset: {offset} Message:{Message}", string.Join(',', consumer.Assignment), cr.Offset.Value.ToString(), cr.Message.Value);
+        }
+    }
 }

@@ -1,768 +1,720 @@
 ﻿using cache_lib.Interfaces;
-using Confluent.Kafka;
-using db_lib.DBEntity;
-using db_lib.Entity.CommonTypes.Api;
-using db_lib.Entity.CommonTypes.Xml;
-using db_lib.Entity.qcb_xml.Enums;
-using db_lib.Entity.qcb_xml.qcb_answer;
-using db_lib.Entity.qcb_xml.qcb_put;
-using db_lib.Entity.qcb_xml.qcb_request;
-using db_lib.Entity.qcb_xml.qcb_result;
+using db_lib.Entities;
+using db_lib.Models.DTO;
 using db_lib.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using QBCH_lib.CommonTypes.Api;
+using QBCH_lib.qcb_xml.v2_0.CommonTypes;
+using QBCH_lib.qcb_xml.v2_0.Enums;
+using QBCH_lib.qcb_xml.v2_0.qcb_answer;
+using QBCH_lib.qcb_xml.v2_0.qcb_request;
+using QBCHService_lib.Models.DTOs;
 using StackExchange.Redis;
-using System.Collections.Concurrent;
 using System.Globalization;
-using System.Xml;
+using System.Text;
+using System.Text.Json;
 using System.Xml.Linq;
-using System.Xml.Serialization;
+using Xml_service_lib;
 
 namespace db_lib.Services.Implementations
 {
-    /// <summary>
-    /// 
-    /// </summary>
-    /// <remarks>
-    /// 
-    /// </remarks>
-    /// <param name="db"></param>
-    /// <param name="cacheService"></param>
-    /// <param name="bKIRequisits"></param>
-    /// <param name="logger"></param>
     public class Repository(
-    qbchContext db,
-    ICacheService cacheService,
-    IBKIRequisitsHandler bKIRequisits,
-    IConfiguration config,
-    ILogger<Repository> logger,
-    ICacheService redisCacheService,
-    IBKIRequisitsHandler QBCH,
-    ICacheService redis) : IRepository
+        qbchContext context,
+        ICacheService cacheService,
+        ILogger<Repository> logger,
+        IXmlService xmlService,
+        IBKIRequisitsHandler requisits) : IRepository
     {
-        /// <summary>
-        /// Контекст БД
-        /// </summary>
-        //private readonly qbchContext _db;
-        private readonly qbchContext _db = db;
+        private readonly qbchContext _context = context;
         private readonly ICacheService _cacheService = cacheService;
-        private readonly IBKIRequisitsHandler _BKIRequisits = bKIRequisits;
         private readonly ILogger<Repository> _logger = logger;
-        private readonly ICacheService _redisCacheService = redisCacheService;
-        private readonly IBKIRequisitsHandler _QBCH = QBCH;
-        private readonly ICacheService _redis = redis;
-        private readonly int _dlRequestExpirationMin = config.GetValue<int?>("RedisCache:DlRequestExpirationHours") ?? 480;
-        private readonly int _qBCHRequestExpirationMin = config.GetValue<int?>("RedisCache:QBCHRequestExpirationMin") ?? 1;
-        private readonly int _dlAnswerExpirationMin = config.GetValue<int?>("RedisCache:DlAnswerExpirationMin") ?? 1;
-        private readonly int _dlPutExpirationMin = config.GetValue<int?>("RedisCache:DlPutExpirationHours") ?? 480;
-        private readonly int _dlPutAnswerExpirationMin = config.GetValue<int?>("RedisCache:DlPutAnswerExpirationMin") ?? 1;
-
-        // Сохранение в БД
-        public async Task SaveToDB(string key, IProducer<Null, string> _producer, string _errorTopic)
-        {
-            var splitted = key.Split(':');
-
-            if (splitted[1] == "dlrequest")
-            {
-                if (await _redis.GetHashSetValueAsync(key, "ErrorCode") == 12 && !await _redis.HashFieldExists(key, "QBCHTotalTime"))
-                {
-                    await _producer.ProduceAsync(_errorTopic, new Message<Null, string> { Value = key });
-                    return;
-                }
-            }
-            else
-            {
-                if (!(await _redis.HashFieldExists(key, "ResponseTime")))
-                {
-                    await _producer.ProduceAsync(_errorTopic, new Message<Null, string> { Value = key });
-                    return;
-                }
-            }
-
-            // Сохранение в БД
-            switch (splitted[1])
-            {
-                case "dlrequest":
-                    await SaveDlRequest(key, splitted[2]);
-                    break;
-                case "dlanswer":
-                    await SaveDlAnswer(key, splitted[2]);
-                    break;
-                case "dlput":
-                    await SaveDlPut(key, splitted[2]);
-                    break;
-                case "dlputanswer":
-                    await SaveDlPutAnswer(key, splitted[2]);
-                    break;
-                default:
-                    break;
-            }
-        }
-
-        // Сохранение в БД - ОБРАБОТКА ОШИБОЧНОГО ТОПИКА
-        public async Task SaveToDBErrorApp(string key)
-        {
-            var splitted = key.Split(':');
-
-            // Ждем пока на запрос не будет подготовлен и отправлен ответ. Для dlrequest ждем еще и когда выполнится qbch_task
-            int i = 0;
-            if (splitted[1] == "dlrequest")
-            { 
-                while (await _redis.GetHashSetValueAsync(key, "ErrorCode") == 12 && !await _redis.HashFieldExists(key, "QBCHTotalTime"))
-                {
-                    if (i > 4)
-                    {
-                        _logger.LogError("{key} - Таймаут подготовки ответа", key);
-                        return;
-                    }
-
-                    Thread.Sleep(5000);
-                    i++;
-                }
-            }
-            else
-            {
-                while (!(await _redis.HashFieldExists(key, "ResponseTime")))
-                {
-                    if (i > 4)
-                    {
-                        _logger.LogError("{key} - Таймаут подготовки ответа", key);
-                        return;
-                    }
-
-                    Thread.Sleep(5000);
-                    i++;
-                }
-            }
-
-            // Сохранение в БД
-            switch (splitted[1])
-            {
-                case "dlrequest":
-                    await SaveDlRequest(key, splitted[2]);
-                    break;
-                case "dlanswer":
-                    await SaveDlAnswer(key, splitted[2]);
-                    break;
-                case "dlput":
-                    await SaveDlPut(key, splitted[2]);
-                    break;
-                case "dlputanswer":
-                    await SaveDlPutAnswer(key, splitted[2]);
-                    break;
-                default:
-                    break;
-            }
-        }
-
+        private readonly IXmlService _xmlService = xmlService;
+        private readonly List<QBCHRequisite> _bureauList = requisits.GetBureaList();
+        private const string OurBureaName = "BKICI";
 
         /// <summary>
-        /// 
+        /// Получить абонента по ОГРН
         /// </summary>
-        /// <param name="thumbprint"></param>
-        /// <returns></returns>
-        //private async Task<TrAbonent?> GetAbonentByThumbprint(string? thumbprint) => await _db.TrAbonents.FirstOrDefaultAsync(abonent => abonent.TrAbonentCertificates.Any(x => x.Thumbprint.ToUpper() == thumbprint!.ToUpper()));
+        /// <param name="psrn">ОГРН</param>
+        /// <returns>Абонент</returns>
+        private async Task<TrAbonent?> GetAbonentByPSRN(string? psrn)
+        {
+            // Получаем список сертификатов из кэша
+            DataHelper.Abonents ??= await _context.TrAbonents.ToListAsync();
+
+            var psrnUpper = psrn?.ToUpper();
+            TrAbonent? abonent = DataHelper.Abonents?.FirstOrDefault(x => x.Ogrn == psrnUpper);
+
+            // Если в Кэше данных не нашлось, возможно в таблице есть обновления.  Обновляем Кэш.
+            if (abonent is null)
+                DataHelper.Abonents = await _context.TrAbonents.ToListAsync();
+            else
+                return abonent;
+
+            return DataHelper.Abonents?.FirstOrDefault(x => x.Ogrn == psrnUpper);
+        }
+
+        /// <summary>
+        /// Получить абонента по отпечатку сертификата
+        /// </summary>
+        /// <param name="thumbprint">Отпечаток сертификата</param>
+        /// <returns>Абонент</returns>
         private async Task<TrAbonent?> GetAbonentByThumbprint(string? thumbprint)
         {
-            var keyID = (await _db.TrAbonentCertificates.FirstOrDefaultAsync(x => x.Thumbprint.ToUpper() == thumbprint!.ToUpper()))?.AbonentKeyId;
+            // Получаем список сертификатов из кэша
 
-            return keyID is null ? null : await _db.TrAbonents.FirstOrDefaultAsync(abonent => abonent.KeyId.Equals(keyID));
+            var certs = _context.TrAbonentCertificates.Include(x => x.Abonent).ToList();
+            DataHelper.AbonentCertificates ??= await _context.TrAbonentCertificates.Include(x => x.Abonent).ToListAsync();
+
+            var thumbprintUpper = thumbprint?.ToUpper();
+            TrAbonent? abonent = DataHelper.AbonentCertificates?.FirstOrDefault(x => x.Thumbprint.ToUpper() == thumbprintUpper)?.Abonent;
+
+            // Если в Кэше данных не нашлось, возможно в таблице есть обновления. Обновляем Кэш.
+            if (abonent is null)
+                DataHelper.AbonentCertificates = await _context.TrAbonentCertificates.Include(x => x.Abonent).ToListAsync();
+            else
+                return abonent;
+
+            return DataHelper.AbonentCertificates?.FirstOrDefault(x => x.Thumbprint.ToUpper() == thumbprintUpper)?.Abonent;
+        }
+
+        private async Task<TdUser?> GetOrCreateUserByPSRNAsync(string? psrn)
+        {
+            // Получаем список сертификатов из кэша
+            DataHelper.Users ??= await _context.TdUsers.ToListAsync();
+
+            var psrnUpper = psrn?.ToUpper();
+            TdUser? abonent = DataHelper.Users?.FirstOrDefault(x => x.Ogrn?.ToUpper() == psrnUpper);
+
+            // Если в Кэше данных не нашлось, возможно в таблице есть обновления.  Обновляем Кэш.
+            if (abonent is null)
+                DataHelper.Users = await _context.TdUsers.ToListAsync();
+            else
+                return abonent;
+
+            return DataHelper.Users?.FirstOrDefault(x => x.Ogrn?.ToUpper() == psrnUpper);
         }
 
         /// <summary>
-        /// 
+        /// Обертка tryparse возвращающая 0 в случае отсувствия значения
         /// </summary>
-        /// <param name="psrn"></param>
+        /// <param name="value"></param>
         /// <returns></returns>
-        private async Task<TrAbonent?> GetAbonentByPSRN(string? psrn) => await _db.TrAbonents.FirstOrDefaultAsync(abonent => abonent.Ogrn == psrn);
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="ogrn"></param>
-        /// <returns></returns>
-        private async Task<long?> GetUserIndividualId(string? ogrn) => string.IsNullOrWhiteSpace(ogrn) ? null : (await _db.TdUsersIndividuals.FirstOrDefaultAsync(x => x.Ogrn == ogrn))?.KeyId;
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="ogrn"></param>
-        /// <returns></returns>
-        private async Task<long?> GetUserLegalId(string? ogrn) => string.IsNullOrWhiteSpace(ogrn) ? null : (await _db.TdUsersLegals.FirstOrDefaultAsync(x => x.Ogrn == ogrn))?.KeyId;
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="userType"></param>
-        /// <param name="ogrn"></param>
-        /// <returns></returns>
-        private async Task<long?> GetUserId(int? userType, string? ogrn)
+        private static int GetIntValue(string? value)
         {
-            return userType switch
+            if (string.IsNullOrWhiteSpace(value))
+                return 0;
+
+            if (int.TryParse(value, out var result))
             {
-                1 or 3 or 4 => await GetUserLegalId(ogrn),
-                2 or 5 => await GetUserIndividualId(ogrn),
-                _ => null
+                return result;
+            }
+            else
+            {
+                throw new Exception("Ошибка считывания значения поля ErrorCode");
+            }
+        }
+
+        private static int? TryGetIntValue(string? value)
+        {
+            return int.TryParse(value, out var result) ? result : null;
+        }
+
+        /// <summary>
+        /// Попытка распросить DateTime из строки по шаблону dd.MM.yyyy HH:mm:ss:ffff
+        /// </summary>
+        /// <param name="value">Значение</param>
+        /// <param name="pattern">Паттерн с дефолтным значением</param>
+        /// <returns>DateTime</returns>
+        private static DateTime? GetDateTimeValue(byte[]? value, string? pattern = "dd.MM.yyyy HH:mm:ss:ffff")
+        {
+
+            if (DateTime.TryParseExact(Encoding.UTF8.GetString(value), pattern, CultureInfo.InvariantCulture, DateTimeStyles.None, out var ValidDateTime))
+                return ValidDateTime;
+
+            return null;
+        }
+
+        /// <summary>
+        /// Попытка распросить DateTime из строки по шаблону dd.MM.yyyy HH:mm:ss:ffff
+        /// </summary>
+        /// <param name="value">Значение</param>
+        /// <param name="pattern">Паттерн с дефолтным значением</param>
+        /// <returns>DateTime</returns>
+        private static DateTime? GetDateTimeValue(string? value, string? pattern = "dd.MM.yyyy HH:mm:ss:ffff")
+        {
+
+            if (DateTime.TryParseExact(value, pattern, CultureInfo.InvariantCulture, DateTimeStyles.None, out var ValidDateTime))
+                return ValidDateTime;
+
+            return null;
+        }
+
+        private static string? TryParseXmlBytesToString(byte[]? bytes)
+        {
+            try
+            {
+                if (bytes is not null)
+                    return XDocument.Load(new MemoryStream(bytes)).ToString();
+            }
+            catch
+            {
+                return null;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Получить пользователя по огрн
+        /// </summary>
+        /// <param name="psrn">Огрн</param>
+        /// <returns>Пользователь</returns>
+        private async Task<TdUser?> GetOrCreateUser(Запрос Запрос, List<TdUser> users)
+        {
+            TdUser? user = null;
+
+            if (Запрос.Источник.ИностранныйПредприниматель is not null || Запрос.Источник.ИностранноеЮЛ is not null)
+            {
+                return await GetOrCreateForeign(Запрос.Источник, users);
+            }
+
+            var psrnUpper = Запрос.Источник.ЮридическоеЛицо?.ОГРН.ToUpper() ??
+                            Запрос.Источник.ИндивидуальныйПредприниматель?.ОГРН.ToUpper();
+
+            if (users.Any(x => x.Ogrn?.ToUpper() == psrnUpper))
+                return users.FirstOrDefault(x => x.Ogrn?.ToUpper() == psrnUpper);
+
+            user = await _context.TdUsers.FirstOrDefaultAsync(x => !string.IsNullOrWhiteSpace(x.Ogrn) && x.Ogrn.ToUpper() == psrnUpper);
+
+            /* Типы пользователей из БД
+             * 1	Юридическое лицо
+             * 2	Индивидуальный предприниматель
+             */
+            if (user is null)
+            {
+                if (Запрос.Источник.ИндивидуальныйПредприниматель is ТипИП ИП)
+                {
+                    user = CreateUserndIvidual(
+                        ИП.ФИО,
+                        ИП.ДокументЛичности,
+                        DateOnly.FromDateTime(ИП.ДатаРождения),
+                        ИП.МестоРождения,
+                        ИП?.ИНН,
+                        ИП?.ОГРН,
+                        2,
+                        snils: ИП?.СНИЛС);
+                }
+                else if (Запрос.Источник.ЮридическоеЛицо is ЗапросСведенийЗапросИсточникЮридическоеЛицо ЮЛ)
+                {
+                    user = CreateUserLegal(
+                        ЮЛ.ПолноеНаименование,
+                        ЮЛ?.СокращенноеНаименование,
+                        ЮЛ?.ИноеНаименование,
+                        ЮЛ?.ИНН,
+                        ЮЛ?.ОГРН,
+                        1);
+                }
+            }
+
+            if (user is not null)
+                users.Add(user);
+
+            return user;
+        }
+
+        private async Task<TdUser?> GetOrCreateForeign(ЗапросСведенийЗапросИсточник источник, List<TdUser> users)
+        {
+            TdUser? user = null;
+
+            var IndividualKey = источник.ИностранныйПредприниматель?.ФИО.Фамилия + источник.ИностранныйПредприниматель?.ФИО.Имя + источник.ИностранныйПредприниматель?.ДокументЛичности.Серия + источник.ИностранныйПредприниматель?.ДокументЛичности.Номер;
+            var userName = источник.ИностранноеЮЛ?.ПолноеНаименование ?? IndividualKey;
+
+            user = users.FirstOrDefault(x => x.FullName == userName);
+
+            if (user is not null)
+                return user;
+
+            user = await _context.TdUsers.AsNoTracking().FirstOrDefaultAsync(x => x.FullName == userName);
+
+            if (user is null)
+            {
+                if (источник.ИностранныйПредприниматель is ТипИностранныйПредприниматель ИностранныйИП)
+                {
+                    user = CreateUserndIvidual(
+                        ИностранныйИП.ФИО,
+                        ИностранныйИП.ДокументЛичности,
+                        DateOnly.FromDateTime(ИностранныйИП.ДатаРождения),
+                        ИностранныйИП.МестоРождения,
+                        ИностранныйИП?.ИНН,
+                        ИностранныйИП?.ОГРН,
+                        5, // 5 - Иностранный предприниматель
+                        true);
+                    user.FullName = IndividualKey;
+                }
+                else if (источник.ИностранноеЮЛ is ЗапросСведенийЗапросИсточникИностранноеЮЛ иностранноеЮЛ)
+                {
+                    user = CreateUserLegal(
+                        иностранноеЮЛ.ПолноеНаименование,
+                        иностранноеЮЛ?.СокращенноеНаименование,
+                        иностранноеЮЛ?.ИноеНаименование,
+                        иностранноеЮЛ?.ИНН,
+                        иностранноеЮЛ?.ОГРН,
+                        1,
+                        true);
+                }
+            }
+
+            if (user is not null)
+                users.Add(user);
+
+            return user;
+        }
+
+        private static TdUser CreateUserndIvidual(
+            ТипФИО ФИО,
+            ТипДУЛПредпринимателя ДУЛ,
+            DateOnly датаРождения,
+            string? местоРождения,
+            string? tin,
+            string? psrn,
+            int userType,
+            bool isForeign = false,
+            string? snils = null)
+        {
+            return new TdUser()
+            {
+                BirthDate = датаРождения,
+                BirthPlace = местоРождения,
+                FirstName = ФИО.Имя,
+                LastName = ФИО.Фамилия,
+                MiddleName = ФИО.Отчество,
+                DocIssueDate = DateOnly.FromDateTime(ДУЛ.ДатаВыдачи),
+                DocIssuerCode = ДУЛ.КодПодразделения,
+                DocIssuerName = ДУЛ.НаименованиеОргана,
+                DocNumber = ДУЛ.Номер,
+                DocSeria = ДУЛ.Серия,
+                DocOtherName = ДУЛ.НаименованиеДУЛ,
+                DocType = MapDocType(ДУЛ.КодДУЛ),
+                Inn = tin,
+                Ogrn = psrn,
+                Snils = snils,
+                UserType = userType,
+                IsForeign = isForeign
             };
         }
 
-        /* Реализация сохранения 
-         * данных в БД
-         */
-
-        /// <summary>
-        /// Запись запроса dlrequest
-        /// </summary>
-        /// <param name="guid"></param>
-        /// <param name="thumbprint"></param>
-        /// <param name="request"></param>
-        /// <returns></returns>
-        /// <exception cref="NotImplementedException"></exception>
-        public async Task SaveDlRequest(string key, string guid)
+        private static TdUser CreateUserLegal(
+            string fullName,
+            string? shortName,
+            string? otherName,
+            string? tin,
+            string? psrn,
+            int userType,
+            bool isForeign = false)
         {
-            var data = await _redisCacheService.TryGetHashAll(key);
-            var abonent = await GetAbonentByThumbprint(data.FirstOrDefault(x => x.Name == "Thumbprint").Value);
-            var RequestString = data.FirstOrDefault(x => x.Name == "request").Value;
-
-            ЗапросСведенийОПлатежах? request = null;
-
-            if (!string.IsNullOrWhiteSpace(RequestString.ToString()))
+            return new TdUser()
             {
-                var serializer = new XmlSerializer(typeof(ЗапросСведенийОПлатежах));
-                try
-                {
-                    request = serializer.Deserialize(new StringReader(RequestString!)) as ЗапросСведенийОПлатежах;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Невалидный xml файл {key}", key);
-                }
-            }
-
-            // Добавление запроса
-            var requestId = await AddDlRequest(request, abonent?.KeyId, key, guid);
-
-            if (request is not null)
-            {
-                await AddSubject(request, requestId);
-                await AddQBCHRequests(requestId, key);
-                await EfSaveChanges();
-            }
-
-            try
-            {
-                await _redisCacheService.SetKeyExpiration(key, _dlRequestExpirationMin);
-                foreach (var item in _QBCH.GetBureaList())
-                {
-                    await _redisCacheService.SetKeyExpiration($"{key}:{item.ogrn}", _qBCHRequestExpirationMin);
-                }
-
-            }
-            catch (Exception ex)
-            {
-                _logger.LogCritical(ex, "Возникла ошибка изменения времени жазни ключа в Redis");
-            }
-        }
-
-        /// <summary>
-        /// Запись запроса dlanswer
-        /// </summary>
-        /// <returns></returns>
-        public async Task SaveDlAnswer(string key, string guid)
-        {
-            await CheckReddisHasValues(key, guid);
-            var values = await _cacheService.TryGetHashAll(key);
-            var abonent = await GetAbonentByThumbprint(values.FirstOrDefault(x => x.Name == "Thumbprint").Value);
-
-            // Добавление запроса
-            TeDlanswer TeDlanswer = new()
-            {
-                DlanswerId = values.FirstOrDefault(x => x.Name == "guid").Value,
-                RequestDateTime = DateTime.ParseExact(values.FirstOrDefault(x => x.Name == "RequestTime").Value!, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture),
-                ValidationDateTime = DateTime.TryParseExact(values.FirstOrDefault(x => x.Name == "ValidationTime").Value, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture, DateTimeStyles.None, out var ValidateDateTime) ? ValidateDateTime : null,
-                ResponseDateTime = DateTime.ParseExact(values.FirstOrDefault(x => x.Name == "ResponseTime").Value!, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture),
-                ResponseXml = values.FirstOrDefault(x => x.Name == "ResponseXml").Value,
-                AbonentKeyId = abonent?.KeyId,
-                TempGuid = guid,
-                ResponseSignedData = values.FirstOrDefault(x => x.Name == "SignedResponse").Value,
-                RequestCertificateThumbprint = values.FirstOrDefault(x => x.Name == "Thumbprint").Value,
-                ErrorMessage = values.FirstOrDefault(x => x.Name == "ErrorMessage").Value,
-                ErrorCodeKeyId = (int)values.FirstOrDefault(x => x.Name == "ErrorCode").Value,
-                IpAddress = values.FirstOrDefault(x => x.Name == "IpAddress").Value,
+                FullName = fullName,
+                ShortName = shortName,
+                OtherName = otherName,
+                Inn = tin,
+                Ogrn = psrn,
+                UserType = userType,
+                IsForeign = isForeign,
             };
-
-            await _db.TeDlanswers.AddAsync(TeDlanswer);
-
-            await EfSaveChanges();
-
-            try
-            {
-                await _redisCacheService.SetKeyExpiration(key, _dlAnswerExpirationMin);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogCritical(ex, "Возникла ошибка изменения времени жазни ключа в Redis");
-            }
         }
 
         /// <summary>
-        /// Запись запроса dlputrequest
+        /// Парсинг запросов на отдельные сущности
         /// </summary>
-        /// <param name="guid"></param>
-        /// <param name="thumbprint"></param>
-        /// <param name="request"></param>
-        /// <returns></returns>
-        /// <exception cref="NotImplementedException"></exception>
-        public async Task SaveDlPut(string key, string? guid)
+        /// <param name="ЗапросСведений">Пакет</param>
+        /// <param name="dlrequest">Основной запрос в БД</param>
+        /// <param name="hashset">Сет данных в Redis</param>
+        /// <param name="HaskKey">Ключ к Redis</param>
+        /// <returns>Task</returns>
+        private async Task AddTeRequests(ЗапросСведений ЗапросСведений, TeDlrequest dlrequest, HashEntry[] hashset, string HaskKey)
         {
-            var values = await _cacheService.TryGetHashAll(key);
-            ПредставлениеСведенийОПлатежах? request = null;
+            var JsonTextValue = hashset.FirstOrDefault(x => x.Name == "package_error").Value.ToString();
+            List<PackageError>? packageErrors = null;
 
-            try
+            if (!string.IsNullOrWhiteSpace(JsonTextValue))
             {
-                var serializer = new XmlSerializer(typeof(ПредставлениеСведенийОПлатежах));
-                request = serializer.Deserialize(new StringReader(values.FirstOrDefault(x => x.Name == "request").Value!)) as ПредставлениеСведенийОПлатежах;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Кривой запрос {key}", key);
+                packageErrors = JsonSerializer.Deserialize<List<PackageError>>(JsonTextValue);
             }
 
-            var abonent = await GetAbonentByThumbprint(values.FirstOrDefault(x => x.Name == "Thumbprint").Value);
+            //ЗапросСведений template = ЗапросСведений;
+            List<Запрос> запросы = ЗапросСведений.Запрос;
 
-            // Добавление запроса
-            TeDlput teRequest = new()
+            //template.Запрос = [];
+            TeRequest teRequest;
+            List<TdUser> users = [];
+
+            foreach (var запрос in запросы)
             {
-                DlputanswerId = guid,
-                RequestId = values.FirstOrDefault(x => x.Name == "RequestId").Value,
-                RequestDateTime = DateTime.ParseExact(values.FirstOrDefault(x => x.Name == "RequestTime").Value!, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture),
-                ResponseDateTime = DateTime.ParseExact(values.FirstOrDefault(x => x.Name == "ResponseTime").Value!, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture),
-                AbonentKeyId = abonent?.KeyId,
-                RequestSignedData = values.FirstOrDefault(x => x.Name == "SignedRequest").Value,
-                RequestXml = values.FirstOrDefault(x => x.Name == "request").Value,
-                ErrorMessage = values.FirstOrDefault(x => x.Name == "ErrorMessage").Value,
-                ErrorCodeKeyId = (int)values.FirstOrDefault(x => x.Name == "ErrorCode").Value,
-                ValidationDateTime = DateTime.TryParseExact(values.FirstOrDefault(x => x.Name == "ValidationTime").Value, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture, DateTimeStyles.None, out var ValidationTime) ? ValidationTime : null,
-                ResponseSignedData = values.FirstOrDefault(x => x.Name == "SignedResponse").Value,
-                AddCommandsCount = request?.Договоры.Count(item => item.Item is ДоговорДобавить) ?? 0,
-                DeleteCommandsCount = request?.Договоры.Count(item => item.Item is ДоговорУдалить) ?? 0,
-                IpAddress = values.FirstOrDefault(x => x.Name == "IpAddress").Value,
-                RequestCertificateThumbprint = values.FirstOrDefault(x => x.Name == "Thumbprint").Value,
-                ResponseXml = values.FirstOrDefault(x => x.Name == "ResponseXml").Value
-            };
+                //template.Запрос = [запрос];
+                var packageError = packageErrors?.FirstOrDefault(e => e.Id == запрос.ПорядковыйНомер);
 
-            await _db.TeDlputs.AddAsync(teRequest);
-            await EfSaveChanges();
-
-            try
-            {
-                await _redisCacheService.SetKeyExpiration(key, _dlPutExpirationMin);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogCritical(ex, "Возникла ошибка изменения времени жазни ключа в Redis");
-            }
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="key"></param>
-        /// <param name="guid"></param>
-        /// <returns></returns>
-        public async Task SaveDlPutAnswer(string key, string guid)
-        {
-            var values = await _cacheService.TryGetHashAll(key);
-            var abonent = await GetAbonentByThumbprint(values.FirstOrDefault(x => x.Name == "Thumbprint").Value);
-
-            TeDlputanswer teDlPutAnswer = new()
-            {
-                DlputanswerId = values.FirstOrDefault(x => x.Name == "guid").Value,
-                RequestDateTime = DateTime.ParseExact(values.FirstOrDefault(x => x.Name == "RequestTime").Value!, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture),
-                ValidationDateTime = DateTime.TryParseExact(values.FirstOrDefault(x => x.Name == "ValidationTime").Value, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture, DateTimeStyles.None, out var ValidationTime) ? ValidationTime : null,
-                ResponseDateTime = DateTime.ParseExact(values.FirstOrDefault(x => x.Name == "ResponseTime").Value!, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture),
-                ResponseXml = values.FirstOrDefault(x => x.Name == "ResponseXml").Value,
-                ResponseSignedData = values.FirstOrDefault(x => x.Name == "SignedResponse").Value,
-                AbonentKeyId = abonent?.KeyId,
-                TempGuid = guid,
-                RequestCertificateThumbprint = values.FirstOrDefault(x => x.Name == "Thumbprint").Value,
-                ErrorMessage = values.FirstOrDefault(x => x.Name == "ErrorMessage").Value,
-                ErrorCodeKeyId = (int)values.FirstOrDefault(x => x.Name == "ErrorCode").Value,
-                IpAddress = values.FirstOrDefault(x => x.Name == "IpAddress").Value
-            };
-
-            await _db.TeDlputanswers.AddAsync(teDlPutAnswer);
-            await EfSaveChanges();
-
-            try
-            {
-                await _redisCacheService.SetKeyExpiration(key, _dlPutAnswerExpirationMin);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogCritical(ex, "Возникла ошибка изменения времени жазни ключа в Redis");
-            }
-        }
-
-        /* Вспомогательные методы 
-         * для сохранения данных в БД
-         */
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="methodName"></param>
-        /// <param name="guid"></param>
-        /// <returns></returns>
-        private async Task CheckReddisHasValues(string key, string guid)
-        {
-            int i = 0;
-            while (!_cacheService.TryGetHash(key, "ResponseTime", out var result))
-            {
-                i++;
-                if (i > 15)
+                int error = packageError?.error_code ?? 0;
+                var user = await GetOrCreateUser(запрос, users);
+                teRequest = new TeRequest()
                 {
-                    _logger.LogCritical("ResponseTime отсутствует в reddis {key}", key);
-                    break;
-                }
+                    Dlrequest = dlrequest,
+                    OrderNum = запрос.ПорядковыйНомер,
+                    ErrorCode = error,
+                    ErrorMessage = packageError?.error_message,
+                    User = user?.KeyId == 0 ? user : null,
+                    UserId = user?.KeyId == 0 ? null : user?.KeyId,
+                    RequestXml = _xmlService.SerializeAsString(запрос)?.Trim()
+                };
 
-                await Task.Delay(1000);
+                await _context.TeRequests.AddAsync(teRequest);
+                ЗапросСведений.Запрос = запросы;
+                await AddSubject(запрос, teRequest);
             }
-        }
-
-        /// <summary>
-        /// Добавление всех запросов КБКИ в бд
-        /// </summary>
-        /// <param name="requestId"></param>
-        /// <param name="guid"></param>
-        /// <returns></returns>
-        private async Task AddQBCHRequests(long requestId, string key)
-        {
-            var bureaulist = _BKIRequisits.GetBureaList();
-            var ourBureauOgrn = bureaulist.First(x => x.Name == "BKICI").ogrn;
-
-            //// Создаем лист с сущностями запросов в КБКИ и сразу добавляем туда наш запрос
-            ConcurrentBag<TeQbchDlrequest> QBCHtoDB = [];
-
-            // Перебираем другие КБКИ и создаем запись в БД
-            foreach (var item in bureaulist)
-            {
-                var values = await _cacheService.TryGetHashAll($"{key}:{item.ogrn}");
-                if (values.Length == 0)
-                    continue;
-
-                var QBCHAbonent = await GetAbonentByPSRN(item.ogrn);
-                var responseXml = values.FirstOrDefault(x => x.Name == "ResponseXml").Value;
-                string? ticketId = null;
-
-                try
-                {
-                    ticketId = XDocument.Parse(responseXml).Root?.Attribute("ИдентификаторОтвета")?.Value;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning("key:{key} ex:{ex}", key, ex.Message);
-                }
-
-                QBCHtoDB.Add(new()
-                {
-                    QbchKeyId = QBCHAbonent.KeyId,
-                    DlrequestMainKeyId = requestId,
-                    TaskStartDateTime = DateTime.ParseExact(values.First(x => x.Name == "StartTime").Value!, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture),
-                    ResponseDateTime = DateTime.TryParseExact(values.FirstOrDefault(x => x.Name == "ResponseTime").Value, "dd.MM.yyyy HH:mm:ss:ffff",
-                                                            CultureInfo.InvariantCulture, DateTimeStyles.None, out var ResponseDateTime) ? ResponseDateTime : null,
-                    RequestSignedData = values.FirstOrDefault(x => x.Name == "SignedRequest").Value,
-                    RequestXml = values.FirstOrDefault(x => x.Name == "RequestXml").Value,
-                    ErrorMessage = values.FirstOrDefault(x => x.Name == "ErrorMessage").Value,
-                    ErrorCodeKeyId = (int)values.FirstOrDefault(x => x.Name == "ErrorCode").Value,
-                    ResponseId = values.FirstOrDefault(x => x.Name == "TicketId").Value.HasValue ? values.FirstOrDefault(x => x.Name == "TicketId").Value : ticketId,
-                    DlrequestResendCount = (int)values.FirstOrDefault(x => x.Name == "TicketResendCount").Value,
-                    DlanswerResendCount = (int)values.FirstOrDefault(x => x.Name == "AnswerResendCount").Value,
-                    DlanswerStartDateTime = DateTime.TryParseExact(values.FirstOrDefault(x => x.Name == "DlAnswerStartTime").Value,
-                                                    "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture, DateTimeStyles.None, out var DlanswerStartDateTime) ? DlanswerStartDateTime : null,
-                    DlrequestStartDateTime = DateTime.TryParseExact(values.FirstOrDefault(x => x.Name == "DlRequestStartTime").Value,
-                                                            "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture, DateTimeStyles.None, out var DlrequestStartDateTime) ? DlrequestStartDateTime : null,
-                    ResponseSignedData = values.FirstOrDefault(x => x.Name == "SignedQBCHResponse").Value,
-                    ResponseXml = responseXml,
-                    ResponseType = GetResponseType(responseXml, ourBureauOgrn),
-                });
-
-            }
-
-            await _db.TeQbchDlrequests.AddRangeAsync(QBCHtoDB);
-            await EfSaveChanges();
         }
 
         /// <summary>
         /// Добавить субъекта в БД
         /// </summary>
         /// <param name="request"></param>
-        /// <param name="requestId"></param>
         /// <returns></returns>
-        private async Task AddSubject(ЗапросСведенийОПлатежах request, long requestId)
+        private async Task AddSubject(Запрос request, TeRequest teRequest)
         {
-            // Добавление субъектов
-            //var _db = new qbchContext(_config);
             TeSubject subject = new()
             {
-                BirthDay = DateOnly.FromDateTime(request.Запрос!.Субъект!.ДатаРождения),
-                Inn = request.Запрос.Субъект.ИнНомер,
-                Snils = request.Запрос.Субъект.СНИЛС,
-                RequestKeyId = requestId
+                Request = teRequest,
+                BirthDay = DateOnly.FromDateTime(request.Субъект!.ДатаРождения),
+                Inn = request.Субъект.ИНН?.Value ?? request.Субъект.ИнНомер,
+                Snils = request.Субъект.СНИЛС,
+                InnChecked = request.Субъект.ИНН?.ПризнакПроверки == ТипИННФЛсПризнакомПризнакПроверки.Item1,
+                InnForeign = !string.IsNullOrWhiteSpace(request.Субъект.ИнНомер)
             };
-            await _db.TeSubjects.AddAsync(subject);
-            await EfSaveChanges();
 
-            var subjectId = subject.KeyId;
+            await _context.TeSubjects.AddAsync(subject);
+            await _context.TeSubjectsDocuments.AddRangeAsync(AddSubjectDocs(request, subject));
+            await _context.TeSubjectsFullNames.AddRangeAsync(AddSubjectFIO(request, subject));
+        }
 
-            // Документы субъекта
-            var docs = request.Запрос?.Субъект?.ДокументЛичности?.Select(x => new TeSubjectsDocument()
+        /// <summary>
+        /// сформировать список документов для записи в бд
+        /// </summary>
+        /// <param name="request"></param>
+        /// <param name="subject"></param>
+        /// <returns></returns>
+        private static IEnumerable<TeSubjectsDocument> AddSubjectDocs(Запрос request, TeSubject subject) =>
+            request.Субъект?.ДокументЛичности?.Select(x => new TeSubjectsDocument()
             {
-                DocTypeKeyId = MapDocType(x.КодДУЛ),
+                DocTypeId = MapDocType(x.КодДУЛ),
                 DocDateIssue = DateOnly.FromDateTime(x.ДатаВыдачи),
                 DocSeries = x.Серия,
-                DocNumber = x.Номер!,
+                DocNumber = x.Номер,
                 CountryCode = int.TryParse(x.Гражданство, out var result) ? result : null,
-                SubjectKeyId = subjectId
-            });
+                Subject = subject
+            }) ?? [];
 
-            if (docs?.Any() ?? false)
-            {
-                await _db.TeSubjectsDocuments.AddRangeAsync(docs);
-                //await EfSaveChanges();
-            }
-
-            // ФИО субъекта
-            var FIO = request.Запрос?.Субъект?.ФИО?.Select(x => new TeSubjectsFullName()
+        /// <summary>
+        /// Сформировать ФИО для записи в БД
+        /// </summary>
+        /// <param name="request"></param>
+        /// <param name="subject"></param>
+        /// <returns></returns>
+        private static IEnumerable<TeSubjectsFullName> AddSubjectFIO(Запрос request, TeSubject subject) =>
+            request.Субъект?.ФИО?.Select(x => new TeSubjectsFullName()
             {
                 FirstName = x.Имя,
                 LastName = x.Фамилия,
                 MiddleName = x.Отчество,
-                SubjectKeyId = subjectId
-            });
+                Subject = subject
+            }) ?? [];
 
-            if (FIO?.Any() ?? false)
-            {
-                await _db.TeSubjectsFullNames.AddRangeAsync(FIO);
-                await EfSaveChanges();
-            }
-        }
-
-        /// <summary>
-        /// Добавление запроса
-        /// </summary>
-        /// <param name="request"></param>
-        /// <param name="abonentId"></param>
-        /// <param name="guid"></param>
-        /// <returns></returns>
-        private async Task<long> AddDlRequest(ЗапросСведенийОПлатежах? request, int? abonentId, string key, string guid)
+        private async Task AddTeQBCHTasks(ЗапросСведений ЗапросСведений, TeDlrequest dlrequest, string redisKey)
         {
-            var values = await _cacheService.TryGetHashAll(key);
-            var userType = GetUserType(request?.Запрос?.Источник);
+            HashEntry[]? hashset = null;
+            string qbchKey = string.Empty;
 
-            // Добавление запроса
-            TeDlrequest teDLRequest = new()
+            TeQbchTask qbchTask;
+
+            // Если СпособыЗапроса только наше бюро то оставляем только наше бюро
+            var bureauList = ЗапросСведений.ТипЗапроса == СправочникСпособыЗапроса.OurBureau ? _bureauList.Where(x => x.Name == OurBureaName) : _bureauList;
+
+            // Для каждого КБКИ создаем в БД свою таску
+            foreach (var bureau in bureauList)
             {
-                RequestId = values.FirstOrDefault(x => x.Name == "RequestId").Value,
-                DlanswerId = guid,
-                RequestDateTime = DateTime.ParseExact(values.FirstOrDefault(x => x.Name == "RequestTime").Value!, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture),
-                ResponseDateTime = DateTime.ParseExact(values.FirstOrDefault(x => x.Name == "ResponseTime").Value!, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture),
-                AbonentKeyId = abonentId,
-                RequestSignedData = values.FirstOrDefault(x => x.Name == "SignedRequest").Value,
-                RequestXml = values.FirstOrDefault(x => x.Name == "request").Value,
-                ErrorMessage = values.FirstOrDefault(x => x.Name == "ErrorMessage").Value,
-                ErrorCodeKeyId = (int)values.FirstOrDefault(x => x.Name == "ErrorCode").Value,
-                ValidationDateTime = DateTime.TryParseExact(values.FirstOrDefault(x => x.Name == "ValidationTime").Value, "dd.MM.yyyy HH:mm:ss:ffff",
-                                                        CultureInfo.InvariantCulture, DateTimeStyles.None, out var ValidationDateTime) ? ValidationDateTime : null,
-                ResponseSignedData = values.FirstOrDefault(x => x.Name == "SignedResponse").Value,
-                RequsetTypeKeyId = request?.ТипЗапроса is null ? null : (int?)request?.ТипЗапроса + 1,
-                UserTypeId = userType,
-                UserId = await GetUserId(userType, request?.Запрос?.Источник?.Ogrn) ?? (userType.HasValue ? await CreateUser(request) : null),
-                IpAddress = values.FirstOrDefault(x => x.Name == "IpAddress").Value,
-                RequestCertificateThumbprint = values.FirstOrDefault(x => x.Name == "Thumbprint").Value,
-                ResponseXml = values.FirstOrDefault(x => x.Name == "ResponseXml").Value,
-                QbchTotalExecutionDateTime = DateTime.TryParseExact(values.FirstOrDefault(x => x.Name == "QBCHTotalTime").Value, "dd.MM.yyyy HH:mm:ss:ffff",
-                                                        CultureInfo.InvariantCulture, DateTimeStyles.None, out var QbchTotalExecutionDateTime) ? QbchTotalExecutionDateTime : null
-            };
+                qbchKey = $"{redisKey}:{bureau.ogrn}";
+                hashset = await _cacheService.TryGetHashAll(qbchKey);
 
-            await _db.TeDlrequests.AddAsync(teDLRequest);
-            await EfSaveChanges();
-            var keyId = teDLRequest.KeyId;
-            teDLRequest.Dispose();
-            return keyId;
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="userType"></param>
-        /// <param name="request"></param>
-        /// <returns></returns>
-        /// <exception cref="NotImplementedException"></exception>
-        private async Task<long?> CreateUser(ЗапросСведенийОПлатежах? request)
-        {
-            long? result = null;
-
-            if (request?.Запрос?.Источник?.ИностранныйПредприниматель is ТипИностранныйПредприниматель foreignIE)
-            {
-                result = await CreateUserNP(
-                    foreignIE.ФИО?.Фамилия,
-                    foreignIE.ФИО?.Имя,
-                    foreignIE.ФИО?.Отчество,
-                    foreignIE.ОГРН,
-                    foreignIE.ИНН,
-                    foreignIE.ДатаРождения,
-                    foreignIE.МестоРождения,
-                    foreignIE.ДокументЛичности?.ДатаВыдачи,
-                    MapDocType(foreignIE.ДокументЛичности?.КодДУЛ),
-                    foreignIE.ДокументЛичности?.КодПодразделения,
-                    foreignIE.ДокументЛичности?.НаименованиеДУЛ,
-                    foreignIE.ДокументЛичности?.НаименованиеОргана,
-                    foreignIE.ДокументЛичности?.Номер,
-                    foreignIE.ДокументЛичности?.Серия);
-            }
-            else if (request?.Запрос?.Источник?.ИндивидуальныйПредприниматель is ТипИП IE)
-            {
-                result = await CreateUserNP(
-                    IE.ФИО?.Фамилия,
-                    IE.ФИО?.Имя,
-                    IE.ФИО?.Отчество,
-                    IE.ОГРН,
-                    IE.ИНН,
-                    IE.ДатаРождения,
-                    IE.МестоРождения,
-                    IE.ДокументЛичности?.ДатаВыдачи,
-                    MapDocType(IE.ДокументЛичности?.КодДУЛ),
-                    IE.ДокументЛичности?.КодПодразделения,
-                    IE.ДокументЛичности?.НаименованиеДУЛ,
-                    IE.ДокументЛичности?.НаименованиеОргана,
-                    IE.ДокументЛичности?.Номер,
-                    IE.ДокументЛичности?.Серия,
-                    IE.СНИЛС);
-            }
-            else if (request?.Запрос?.Источник?.ЮридическоеЛицо is ЗапросИсточникЮридическоеЛицо LP)
-            {
-                result = await CreateUserNP(
-                    LP.ИНН,
-                    LP.ОГРН,
-                    LP.ПолноеНаименование,
-                    LP.СокращенноеНаименование,
-                    LP.ИноеНаименование,
-                    true);
-            }
-            else if (request?.Запрос?.Источник?.ИностранноеЮЛ is ЗапросИсточникИностранноеЮЛ foreignLP)
-            {
-                result = await CreateUserNP(
-                   foreignLP.ИНН,
-                   foreignLP.ОГРН,
-                   foreignLP.ПолноеНаименование,
-                   foreignLP.СокращенноеНаименование,
-                   foreignLP.ИноеНаименование,
-                   false);
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="inn"></param>
-        /// <param name="ogrn"></param>
-        /// <param name="fullName"></param>
-        /// <param name="shortName"></param>
-        /// <param name="otherName"></param>
-        /// <param name="isForeign"></param>
-        /// <returns></returns>
-        private async Task<long?> CreateUserNP(string? inn,
-            string? ogrn, string? fullName, string? shortName, string? otherName, bool? isForeign)
-        {
-            TdUsersLegal user =
-
-                new()
+                if (hashset == null)
                 {
-                    IsForeign = isForeign,
-                    FullName = fullName,
-                    ShortName = shortName,
-                    Inn = inn,
-                    Ogrn = ogrn,
-                    OtherName = otherName
-                };
+                    _logger.LogCritical("Ключ {Key} КБКИ {Name} пустой", qbchKey, bureau.Name);
+                    continue;
+                }
 
-            await _db.TdUsersLegals.AddAsync(user);
-
-            await EfSaveChanges();
-            return user.KeyId;
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="lastName"></param>
-        /// <param name="firstName"></param>
-        /// <param name="middleName"></param>
-        /// <param name="ogrn"></param>
-        /// <param name="inn"></param>
-        /// <param name="dateOfBirth"></param>
-        /// <param name="placeOfBirth"></param>
-        /// <param name="issueDate"></param>
-        /// <param name="docCode"></param>
-        /// <param name="issuerCode"></param>
-        /// <param name="docName"></param>
-        /// <param name="issuerName"></param>
-        /// <param name="number"></param>
-        /// <param name="series"></param>
-        /// <param name="snils"></param>
-        /// <returns></returns>
-        private async Task<long?> CreateUserNP(string? lastName, string? firstName, string? middleName,
-            string? ogrn, string? inn, DateTime dateOfBirth, string? placeOfBirth, DateTime? issueDate,
-            string? docCode, string? issuerCode, string? docName,
-            string? issuerName, string? number, string? series, string? snils = null)
-        {
-            TdUsersIndividual user =
-
-                new()
+                qbchTask = new TeQbchTask()
                 {
-                    Inn = inn,
-                    Ogrn = ogrn,
-                    Snils = snils,
-                    LastName = lastName,
-                    FirstName = firstName,
-                    MiddleName = middleName,
-                    DocTypeKeyId = docCode,
-                    BirthDate = DateOnly.FromDateTime(dateOfBirth),
-                    BirthPlace = placeOfBirth,
-                    DocIssueDate = DateOnly.FromDateTime(issueDate.Value),
-                    DocIssuerCode = issuerCode,
-                    DocIssuerName = issuerName,
-                    DocOtherName = docName,
-                    DocSeria = series,
-                    DocNumber = number
+                    QbchCorrespondentId = (await GetAbonentByPSRN(bureau.ogrn)).KeyId,
+                    Req = dlrequest,
+                    ResponseId = hashset?.FirstOrDefault(x => x.Name == "response_id").Value,
+                    TaskStartDateTime = GetDateTimeValue(hashset?.FirstOrDefault(x => x.Name == "task_start_date_time").Value.ToString()),
+                    TaskEndDateTime = GetDateTimeValue(hashset?.FirstOrDefault(x => x.Name == "task_end_date_time").Value.ToString()),
+                    TaskResultXml = TryParseXmlBytesToString(hashset?.FirstOrDefault(x => x.Name == "task_result_xml").Value)
                 };
-            await _db.TdUsersIndividuals.AddAsync(user);
+                await _context.TeQbchTasks.AddAsync(qbchTask);
 
-            await EfSaveChanges();
+                // Каждая таска под катом дергает запросы в другие КБКИ(* Функционал АПИ). Все эти запросы логируются в 2 листа redis.
+                // Достаем эти листы и суем их в БД.
+                await AddTeQBCHDlRequests(qbchTask, qbchKey);
+                await AddTeQBCHDlAnswers(qbchTask, qbchKey);
 
-            return user.KeyId;
+                // Допом, когда мы получаем конечный ответ от других КБКИ(читай от внутреннего нашего сервиса).
+                // Мы забираем его и раскладываем в таблицу te_responses потому что надо.
+                await AddTeResponses(qbchTask, bureau.ogrn, dlrequest, ЗапросСведений);
+            }
         }
 
+        /// <summary>
+        /// Добавление всех попыток dlrequest в БД
+        /// </summary>
+        /// <param name="qbchTask">Задча в рамках которой были отправлены запросы</param>
+        /// <param name="redisKey"></param>
+        /// <returns></returns>
+        private async Task AddTeQBCHDlRequests(TeQbchTask qbchTask, string redisKey)
+        {
+            var redis = _cacheService.GetDatabase();
+            var key = $"{redisKey}:dlrequest";
+            var length = await redis.ListLengthAsync(key);
+
+            for (long i = length; i > 0; i--)
+            {
+                var cache = await redis.ListGetByIndexAsync(key, i-1);
+
+                if (!cache.HasValue)
+                    continue;
+
+                using var ms = new MemoryStream(cache!);
+
+                var cachedValue = await JsonSerializer.DeserializeAsync<RedisMessageDTO>(ms);
+                await _context.TeQbchDlrequests.AddAsync(new TeQbchDlrequest()
+                {
+                    ErrorCode = GetIntValue(cachedValue?.ErrorCode),
+                    ErrorMessage = cachedValue?.ErrorMessage,
+                    QbchTask = qbchTask,
+                    RequestData = cachedValue?.RequestData,
+                    RequestXml = TryParseXmlBytesToString(cachedValue?.RequestXml),
+                    HttpResponseCode = GetIntValue(cachedValue?.HttpResponseCode),
+                    ResponseData = cachedValue?.ResponseData,
+                    ResponseXml = TryParseXmlBytesToString(cachedValue?.ResponseXml),
+                    RequestDateTime = GetDateTimeValue(cachedValue?.RequestDateTime),
+                    ResponseDateTime = GetDateTimeValue(cachedValue?.ResponseDateTime)
+                });
+            }
+        }
+
+        private async Task AddTeQBCHDlAnswers(TeQbchTask qbchTask, string redisKey)
+        {
+            var redis = _cacheService.GetDatabase();
+            var key = $"{redisKey}:dlanswer";
+            var length = await redis.ListLengthAsync(key);
+
+            for (long i = length; i > 0; i--)
+            {
+                var cache = await redis.ListGetByIndexAsync(key, i-1);
+
+                if (!cache.HasValue)
+                    continue;
+
+                using var ms = new MemoryStream(cache);
+                var cachedValue = await JsonSerializer.DeserializeAsync<RedisMessageDTO>(ms);
+                await _context.TeQbchDlanswers.AddAsync(new TeQbchDlanswer()
+                {
+                    ErrorCode = GetIntValue(cachedValue?.ErrorCode),
+                    ErrorMessage = cachedValue?.ErrorMessage,
+                    QbchTask = qbchTask,
+                    HttpResponseCode = GetIntValue(cachedValue?.HttpResponseCode),
+                    ResponseData = cachedValue?.ResponseData,
+                    ResponseXml = TryParseXmlBytesToString(cachedValue?.ResponseXml),
+                    RequestDateTime = GetDateTimeValue(cachedValue?.RequestDateTime),
+                    ResponseDateTime = GetDateTimeValue(cachedValue?.ResponseDateTime)
+                });
+            }
+        }
+
+        private async Task AddTeResponses(TeQbchTask qbchTask, string psrn, TeDlrequest taskResult, ЗапросСведений ЗапросСведений)
+        {
+            if (taskResult is null)
+                return;
+
+            var ответ = _xmlService.Deserialize<ОтветНаЗапросСведений>(taskResult.QbchTasksResultXml);
+
+            if (ответ is ОтветНаЗапросСведений ответНаЗапрос)
+            {
+                foreach (var запрос in ЗапросСведений?.Запрос ?? [])
+                {
+                    var Сведения = ответНаЗапрос.Сведения.FirstOrDefault(x => x.ПорядковыйНомер == запрос.ПорядковыйНомер);
+
+                    foreach (var кбки in Сведения?.КБКИ.Where(x => x.ОГРН == psrn) ?? [])
+                    {
+                        var teResponse = new TeResponse()
+                        {
+                            OrderNum = запрос.ПорядковыйНомер,
+                            ResponseXml = _xmlService.SerializeAsString(Сведения)?.Trim(),
+                            QbchTask = qbchTask,
+                            AmpResponseType = ЗапросСведений?.КодСведений == СправочникВидыСведений.SP6 ? null : MapAmpResponseType(кбки, _bureauList.FirstOrDefault(x => x.Name == OurBureaName)?.ogrn),
+                            SpResponseType = MapSpResponseType(кбки),
+                            ErrorCode = GetIntValue(кбки.Ошибка?.Код),
+                            ErrorMessage = кбки.Ошибка?.Value
+                        };
+
+                        await _context.TeResponses.AddAsync(teResponse);
+                    }
+                }
+            }
+        }
 
         /// <summary>
-        /// Запись данных в БД EF
+        /// Попытка сериализации
         /// </summary>
-        /// <returns></returns>
-        private async Task<bool> EfSaveChanges()
+        /// <typeparam name="T">Объект в который нужно сериализовать</typeparam>
+        /// <param name="value">Значение</param>
+        /// <returns>Результат</returns>
+        private T? TryDeserialize<T>(string? value) where T : class
         {
             try
             {
-                return await _db.SaveChangesAsync() > 0;
+                return _xmlService.Deserialize<T>(value);
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, "Ошибка записи в БД при помощи EF");
+                _logger.LogDebug(ex, "Ошибка десериализации");
+            }
+
+            return default;
+        }
+
+        public async Task<bool> CreateDlRequest(string HaskKey, HashEntry[]? hashset)
+        {
+            // Читаем хэш из редиса
+            //HashEntry[]? hashset = await _cacheService.TryGetHashAll(HaskKey);
+
+            // Провекра что хэш считан
+            if (hashset is null)
+            {
+                _logger.LogCritical("не удалось считать данные из Redis");
                 return false;
             }
+
+            var ЗапросСведений = TryDeserialize<ЗапросСведений>(hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString());
+            var requestlist = ЗапросСведений?.Запрос.Select(x => x.ПорядковыйНомер);
+            TrAbonent? trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
+            var errorCode = GetIntValue(hashset.FirstOrDefault(x => x.Name == "error_code").Value);
+
+            TeDlrequest dlrequest = new()
+            {
+                ResponseGuid = hashset.FirstOrDefault(x => x.Name == "response_guid").Value.ToString()!,
+                AbonentId = trAbonent?.KeyId,
+                IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
+
+                RequestCertificateData = hashset.FirstOrDefault(x => x.Name == "request_certificate_data").Value,
+                RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
+                RequestDateTime = DateTime.ParseExact(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value!, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture, DateTimeStyles.None),
+                RequestSignedData = hashset.FirstOrDefault(x => x.Name == "request_signed_data").Value,
+                RequestXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "request_xml").Value),
+
+                ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
+                ErrorCode = errorCode,
+                ErrorMessage = hashset.FirstOrDefault(x => x.Name == "error_message").Value,
+
+                RequestId = ЗапросСведений?.ИдентификаторЗапроса,
+                InformationCode = ЗапросСведений is not null ? (int)ЗапросСведений.КодСведений : null,
+                RequestMode = ЗапросСведений is not null ? (int)ЗапросСведений.РежимЗапроса : null,
+                RequestType = ЗапросСведений is not null ? (int)ЗапросСведений.ТипЗапроса : null,
+
+                QbchTasksEndDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "qbch_tasks_end_date_time").Value.ToString()),
+                QbchTasksResultXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "qbch_tasks_aggregate_xml").Value),
+
+                ResponseSignedData = hashset.FirstOrDefault(x => x.Name == "response_signed_data").Value,
+                ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()),
+                ResponseXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "response_xml").Value)
+            };
+
+            await _context.TeDlrequests.AddAsync(dlrequest);
+
+            // Дробление запросов в таблицу te_request
+            if (ЗапросСведений is not null && (errorCode == 0 || errorCode == 12))
+            {
+                await AddTeRequests(ЗапросСведений, dlrequest, hashset, HaskKey);
+                await AddTeQBCHTasks(ЗапросСведений, dlrequest, HaskKey);
+            }
+
+            return await TrySaveChangesAsync(HaskKey);
+        }
+
+        private async Task<bool> TrySaveChangesAsync(string HaskKey)
+        {
+            try
+            {
+                await _context.SaveChangesAsync();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "Ошибка записи в БД. Ключ {key}", HaskKey);
+                return false;
+            }
+        }
+
+
+        public async Task<bool> CreateDlAnswer(string HaskKey, HashEntry[]? hashset)
+        {
+            // Провекра что хэш считан
+            if (hashset is null)
+            {
+                _logger.LogCritical("не удалось считать данные из Redis");
+                return false;
+            }
+
+            TrAbonent? trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
+
+            TeDlanswer dlanswer = new()
+            {
+                ResponseGuid = hashset.FirstOrDefault(x => x.Name == "response_guid").Value.ToString()!,
+                IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
+                RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
+                RequestCertificateData = hashset.FirstOrDefault(x => x.Name == "request_certificate_data").Value,
+                AbonentId = trAbonent?.KeyId,
+                RequestDateTime = DateTime.ParseExact(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value!, "dd.MM.yyyy HH:mm:ss:ffff", CultureInfo.InvariantCulture, DateTimeStyles.None),
+                ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
+                ResponseDateTime = (DateTime)GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString())!,
+                ErrorMessage = hashset.FirstOrDefault(x => x.Name == "error_message").Value,
+                ErrorCode = GetIntValue(hashset.FirstOrDefault(x => x.Name == "error_code").Value),
+                ResponseXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "response_xml").Value),
+                ResponseSignedData = hashset.FirstOrDefault(x => x.Name == "response_signed_data").Value,
+                TempGuid = hashset.FirstOrDefault(x => x.Name == "temp_guid").Value!
+            };
+
+            await _context.TeDlanswers.AddAsync(dlanswer);
+            await _context.SaveChangesAsync();
+            try
+            {
+                await _context.SaveChangesAsync();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "Ошибка записи в БД. Ключ {key}", HaskKey);
+                return false;
+            }
+        }
+
+        public Task CreateDlPut(string HaskKey)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Task CreateDlPutAnswer(string HaskKey)
+        {
+            throw new NotImplementedException();
         }
 
         /// <summary>
@@ -771,79 +723,63 @@ namespace db_lib.Services.Implementations
         /// <param name="xmlText"></param>
         /// <param name="ourBureauOgrn"></param>
         /// <returns></returns>
-        private int? GetResponseType(string? xmlText, string? ourBureauOgrn)
+        private static int? MapAmpResponseType(КБКИ? qbch, string? ourPSRN)
         {
-            if (string.IsNullOrWhiteSpace(xmlText))
+            if (qbch is null)
                 return null;
 
-            try
+            if (qbch?.СубъектНеНайден != null)
+                return 1;
+            else if (qbch?.ОбязательствНет != null)
+                return 2;
+            else if (qbch?.Обязательства != null)
             {
-                var serializer = new XmlSerializer(typeof(СведенияОПлатежах));
-                using var sr = new StringReader(xmlText);
+                var ourData = qbch.Обязательства.БКИ?.Any(x => x.ОГРН == ourPSRN) ?? false;
+                var notOurData = qbch.Обязательства.БКИ?.Any(x => x.ОГРН != ourPSRN) ?? false;
 
-                if (serializer.Deserialize(sr) is СведенияОПлатежах result)
-                {
-                    var qbch = result.КБКИ?.FirstOrDefault();
-
-                    if (qbch?.СубъектНеНайден != null)
-                        return 1;
-                    else if (qbch?.ОбязательствНет != null)
-                        return 2;
-                    else if (qbch?.Обязательства != null)
-                    {
-                        var ourData = qbch.Обязательства.БКИ?.Any(x => x.ОГРН == ourBureauOgrn) ?? false;
-                        var notOurData = qbch.Обязательства.БКИ?.Any(x => x.ОГРН != ourBureauOgrn) ?? false;
-
-                        // Если есть данные и от нас и от кредо
-                        if (ourData && notOurData)
-                            return 4;
-                        // Если есть данные от кредо, а наших нет
-                        else if (!ourData && notOurData)
-                            return 5;
-                        // Если есть данные только от нас
-                        else if (ourData && !notOurData)
-                            return 3;
-                        else if (!ourData && !notOurData)
-                            return 5;
-                    }
-                }
-                else if (serializer.Deserialize(sr) is Результат ticket)
-                {
-                    if (ticket.Item is Ошибка qbchError)
-                    {
-                        if (qbchError.Код == "18")
-                            return 7;
-                        else
-                            return 6;
-                    }
-                }
+                // Если есть данные и от нас и от кредо
+                if (ourData && notOurData)
+                    return 4;
+                // Если есть данные от кредо, а наших нет
+                else if (!ourData && notOurData)
+                    return 5;
+                // Если есть данные только от нас
+                else if (ourData && !notOurData)
+                    return 3;
+                else if (!ourData && !notOurData)
+                    return 5;
             }
-            catch (Exception ex)
+            else if (qbch?.Ошибка is not null)
             {
-                _logger.LogError(ex, "Возникла ошибка при десериализации");
+                return qbch.Ошибка.Код switch
+                {
+                    "18" => 7,
+                    _ => (int?)6,
+                };
             }
 
             return null;
         }
 
         /// <summary>
-        /// Маппинг типа источника
+        /// 
         /// </summary>
-        /// <param name="source"></param>
+        /// <param name="result"></param>
         /// <returns></returns>
-        private int? GetUserType(ЗапросИсточник? source)
+        private static int? MapSpResponseType(КБКИ? qbch)
         {
-            if (source?.ЮридическоеЛицо != null)
+            if (qbch is null)
+                return null;
+
+            if (qbch?.СубъектНеНайден != null)
                 return 1;
-            else if (source?.ИндивидуальныйПредприниматель != null)
+            else if (qbch?.СведенияОЗапретеНеПредоставляются != null)
                 return 2;
-            else if (source?.ИностранноеЮЛ != null)
+            else if (qbch?.УсловияЗапрета != null)
                 return 3;
-            else if (source?.ИностранныйПредприниматель != null)
+            else if (qbch?.СведенийОЗапретеНет != null)
                 return 4;
 
-
-            _logger.LogWarning("Не удалось определить тип запроса у источника source={source}", source?.Ogrn);
             return null;
         }
 
@@ -852,7 +788,7 @@ namespace db_lib.Services.Implementations
         /// </summary>
         /// <param name="target">Код цели enum</param>
         /// <returns></returns>
-        private int GetTargetCode(ТипЦельКодЦели target)
+        private static int GetTargetCode(ТипЦельКодЦели target)
         {
             return target switch
             {
@@ -888,12 +824,17 @@ namespace db_lib.Services.Implementations
             };
         }
 
+        /// <summary>
+        /// Маппинг типов документов
+        /// </summary>
+        /// <param name="item">Код документа enum</param>
+        /// <returns>Код строка</returns>
         private static string MapDocType(СправочникДУЛ? item)
         {
             return item switch
             {
                 СправочникДУЛ.Item21 => "21",
-                СправочникДУЛ.Item221 => "21.1",
+                СправочникДУЛ.Item221 => "22.1",
                 СправочникДУЛ.Item222 => "22.2",
                 СправочникДУЛ.Item223 => "22.3",
                 СправочникДУЛ.Item23 => "23",
@@ -907,6 +848,7 @@ namespace db_lib.Services.Implementations
                 СправочникДУЛ.Item35 => "35",
                 СправочникДУЛ.Item37 => "37",
                 СправочникДУЛ.Item38 => "38",
+                СправочникДУЛ.Item39 => "39",
                 СправочникДУЛ.Item999 => "999",
                 _ => throw new Exception("Код документа не найден"),
             };

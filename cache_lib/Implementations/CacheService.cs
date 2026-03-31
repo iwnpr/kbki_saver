@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace cache_lib.Implementations
@@ -20,6 +21,36 @@ namespace cache_lib.Implementations
         private static IDatabase _additionDB = null!;
         private readonly int _expirityHours;
         private readonly int _uniqueIdExpirityDays;
+        private readonly int _DlRequestExpirationMin;
+        private readonly int _DlAnswerExpirationMin;
+
+        //private static readonly RedisValue[] fields =
+        //[
+        //    "RequestId",
+        //    "RequestTime",
+        //    "ResponseTime",
+        //    "SignedRequest",
+        //    "request",
+        //    "ErrorMessage",
+        //    "ErrorCode",
+        //    "ValidationTime",
+        //    "SignedResponse",
+        //    "IpAddress",
+        //    "Thumbprint",
+        //    "ResponseXml",
+        //    "QBCHTotalTime",
+        //    "RequestType"
+        //];
+
+        /*
+             "RedisCache:DBIndex": 0, // Default 0
+             "RedisCache:RequestIdUniqueDays": 1, // Default 1
+             "RedisCache:DlRequestExpirationMin": 480, // 8 ЧАСОВ ДО ИСПАРЕНИЯ КЛЮЧА В РЕДИСЕ ПОСЛЕ ЗАПИСИ В БД
+             "RedisCache:QBCHRequestExpirationMin": 1, // 1 МИНУТА ДО ИСПАРЕНИЯ КЛЮЧА В РЕДИСЕ ПОСЛЕ ЗАПИСИ В БД
+             "RedisCache:DlAnswerExpirationMin": 1, // 1 МИНУТА ДО ИСПАРЕНИЯ КЛЮЧА В РЕДИСЕ ПОСЛЕ ЗАПИСИ В БД
+             "RedisCache:DlPutExpirationMin": 480, // 8 ЧАСОВ ДО ИСПАРЕНИЯ КЛЮЧА В РЕДИСЕ ПОСЛЕ ЗАПИСИ В БД
+             "RedisCache:DlPutAnswerExpirationMin": 1 // 1 МИНУТА ДО ИСПАРЕНИЯ КЛЮЧА В РЕДИСЕ ПОСЛЕ ЗАПИСИ В БД
+         */
 
         /// <summary>
         /// Конструктор
@@ -33,6 +64,8 @@ namespace cache_lib.Implementations
             _connectionMultiplexer = connectionMultiplexer;
             _redisDb = _connectionMultiplexer.GetDatabase(int.Parse(_config.GetSection("RedisCache:DBIndex").Value!));
             _additionDB = _redisDb;
+            _DlRequestExpirationMin = _config.GetValue<int>("RedisCache:DlRequestExpirationMin");
+            _DlAnswerExpirationMin = _config.GetValue<int>("RedisCache:QBCHRequestExpirationMin");
         }
 
         /// <summary>
@@ -43,6 +76,11 @@ namespace cache_lib.Implementations
         private void GetDatabase(int id)
         {
             _additionDB = _connectionMultiplexer.GetDatabase(id);
+        }
+
+        public IDatabase GetDatabase()
+        {
+            return _redisDb;
         }
 
         /// <summary>
@@ -86,8 +124,38 @@ namespace cache_lib.Implementations
             }
             catch (Exception e)
             {
-                _log.LogCritical("Redis critical: {Message}", e.Message);
+                _log.LogCritical(e,"Redis critical");
                 throw;
+            }
+        }
+
+        public async Task ClearDLRequestHash(string key, HashEntry[] hashset, IEnumerable<string> QBCHPSRNList)
+        {
+            try
+            {                
+                foreach (var hash in hashset)
+                {
+                    if (hash.Name != "qbch_tasks_aggregate_xml")
+                        await _redisDb.HashDeleteAsync(key, hash.Name);
+                }
+                
+                await SetKeyExpirationInMinutes(key, _DlRequestExpirationMin);
+
+                foreach (var psrn in QBCHPSRNList)
+                {
+
+                    await SetKeyExpirationInMinutes($"{key}:{psrn}", _DlAnswerExpirationMin);
+
+                    if(hashset.Any(x => x.Name == "package_error"))
+                        await SetKeyExpirationInMinutes($"{key}:{psrn}:package_error", _DlAnswerExpirationMin);
+
+                    await SetKeyExpirationInMinutes($"{key}:{psrn}:dlrequest", _DlAnswerExpirationMin);
+                    await SetKeyExpirationInMinutes($"{key}:{psrn}:dlanswer", _DlAnswerExpirationMin);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Не удалось почистить данные в redis");
             }
         }
 
@@ -106,9 +174,16 @@ namespace cache_lib.Implementations
         /// </summary>
         /// <param name="key"></param>
         /// <returns></returns>
-        public async Task SetKeyExpiration(string key, int expirationTime)
+        public async Task SetKeyExpirationInMinutes(string key, int expirationTime)
         {
-            await _redisDb.KeyExpireAsync(key, TimeSpan.FromMinutes(expirationTime));
+            try
+            {
+                await _redisDb.KeyExpireAsync(key, TimeSpan.FromMinutes(expirationTime));
+            }
+            catch(Exception ex)
+            {
+                _log.LogWarning(ex, "Не удалось почистить данные в redis");
+            }
         }
 
         /// <summary>
@@ -156,14 +231,21 @@ namespace cache_lib.Implementations
         /// <param name="hashKey"></param>
         /// <param name="fieldKey"></param>
         /// <returns></returns>
-        public async Task<int?> GetHashSetValueAsync(string hashKey, string fieldKey)
+        public async Task<int> GetIntHashValueAsync(string hashKey, string fieldKey)
         {
-            var value = await _redisDb.HashGetAsync(hashKey, fieldKey);
+            return (int?)await _redisDb.HashGetAsync(hashKey, fieldKey) ?? 0;
+        }
 
-            if (int.TryParse(value, out var result))
-                return result;
-
-            return null;
+        /// <summary>
+        /// Метод преобразующий полученные из redis данные в указанный тип
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="hashKey"></param>
+        /// <param name="fieldKey"></param>
+        /// <returns></returns>
+        public async Task<string?> GetStringHashValueAsync(string hashKey, string fieldKey)
+        {
+            return await _redisDb.HashGetAsync(hashKey, fieldKey);
         }
 
 
