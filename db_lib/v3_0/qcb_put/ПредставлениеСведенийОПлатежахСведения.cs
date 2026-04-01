@@ -8,11 +8,11 @@ namespace QBCH_lib.qcb_xml.v3_0.qcb_put
     [System.Diagnostics.DebuggerStepThrough()]
     [System.ComponentModel.DesignerCategory("code")]
     [XmlType(AnonymousType = true)]
-    public class ПредставлениеСведенийСведения
+    public class ПредставлениеСведенийОПлатежахСведения
     {
         /// <remarks/>
-        [XmlElement("Договор", typeof(ПредставлениеСведенийДоговор))]
-        [XmlElement("ОбращениеОбязательство", typeof(ПредставлениеСведенийОбращениеОбязательство))]
+        [XmlElement("Договор", typeof(ПредставлениеСведенийОПлатежахДоговор))]
+        [XmlElement("ОбращениеОбязательство", typeof(ПредставлениеСведенийОПлатежахОбращениеОбязательство))]
         public object Item { get; set; }
     }
 }

@@ -9,7 +9,7 @@ namespace QBCH_lib.qcb_xml.v3_0.qcb_put
     [System.Diagnostics.DebuggerStepThrough()]
     [System.ComponentModel.DesignerCategory("code")]
     [XmlType(AnonymousType = true)]
-    public class ПредставлениеСведенийОбращениеОбязательство
+    public class ПредставлениеСведенийОПлатежахОбращениеОбязательство
     {
         /// <remarks/>
         public ТипСубъектТитулАФ Субъект { get; set; }

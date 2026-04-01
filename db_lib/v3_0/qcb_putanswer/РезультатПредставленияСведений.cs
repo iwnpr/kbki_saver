@@ -1,6 +1,5 @@
-﻿using System;
+﻿using QBCH_lib.qcb_xml.v3_0.qcb_result;
 using System.Collections.Generic;
-using System.Xml.Serialization;
 
 namespace QBCH_lib.qcb_xml.v3_0.qcb_putanswer
 {
@@ -9,35 +8,31 @@ namespace QBCH_lib.qcb_xml.v3_0.qcb_putanswer
     [System.Serializable()]
     [System.Diagnostics.DebuggerStepThrough()]
     [System.ComponentModel.DesignerCategory("code")]
-    [XmlType(AnonymousType = true)]
-    [XmlRoot(Namespace = "", IsNullable = false)]
-    public class РезультатПредставленияСведений
+    [System.Xml.Serialization.XmlType(AnonymousType = true)]
+    [System.Xml.Serialization.XmlRoot(Namespace = "", IsNullable = false)]
+    public partial class РезультатПредставленияСведений
     {
         /// <remarks/>
         public РезультатПредставленияСведенийБКИ? БКИ { get; set; }
 
         /// <remarks/>
-        [XmlElement("Результат")]
-        public List<РезультатПредставленияСведенийРезультат> Результат { get; set; } = new();
+        [System.Xml.Serialization.XmlArrayItem("Договор", IsNullable = false)]
+        public List<РезультатПредставленияСведенийДоговор>? Договоры { get; set; }
 
         /// <remarks/>
-        [XmlAttribute()]
-        public string Версия { get; set; } = "3.0";
+        [System.Xml.Serialization.XmlAttribute()]
+        public string? Версия { get; set; }
 
         /// <remarks/>
-        [XmlAttribute()]
+        [System.Xml.Serialization.XmlAttribute()]
         public string? ИдентификаторЗапроса { get; set; }
 
         /// <remarks/>
-        [XmlAttribute(DataType = "date")]
-        public DateTime ДатаЗапроса { get; set; }
-
-        /// <remarks/>
-        [XmlAttribute()]
+        [System.Xml.Serialization.XmlAttribute()]
         public string? ИдентификаторОтвета { get; set; }
 
         /// <remarks/>
-        [XmlAttribute()]
+        [System.Xml.Serialization.XmlAttribute()]
         public string? ОГРН { get; set; }
     }
 }

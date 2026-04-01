@@ -1,4 +1,5 @@
 ﻿using QBCH_lib.qcb_xml.v3_0.CommonTypes;
+using QBCH_lib.qcb_xml.v3_0.qcb_result;
 
 namespace QBCH_lib.qcb_xml.v3_0.qcb_answer
 {
@@ -21,7 +22,7 @@ namespace QBCH_lib.qcb_xml.v3_0.qcb_answer
         /// <summary>
         /// 
         /// </summary>
-        public ТипОшибка? Ошибка { get; set; }
+        public Ошибка? Ошибка { get; set; }
         /// <summary>
         /// 
         /// </summary>
@@ -39,21 +40,6 @@ namespace QBCH_lib.qcb_xml.v3_0.qcb_answer
         /// </summary>
         public УсловияЗапрета? УсловияЗапрета { get; set; }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        public СведенияДляПредупрежденияНеПредоставляются? СведенияДляПредупрежденияНеПредоставляются { get; set; }
-        
-        /// <summary>
-        /// 
-        /// </summary>
-        public СведенийДляПредупрежденияНет? СведенийДляПредупрежденияНет { get; set; }
-        
-        /// <summary>
-        /// 
-        /// </summary>
-        public СведенияДляПредупреждения? СведенияДляПредупреждения { get; set; }
-
         /// <remarks/>
         [System.Xml.Serialization.XmlAttribute()]
         public string? ОГРН { get; set; }
@@ -67,8 +53,5 @@ namespace QBCH_lib.qcb_xml.v3_0.qcb_answer
         /// </summary>
         [System.Xml.Serialization.XmlAttribute()]
         public string ИдентификаторОтвета { get; set; }
-
-        [System.Xml.Serialization.XmlAttribute()]
-        public string? ПризнакНаличияКИ { get; set; }
     }
 }
