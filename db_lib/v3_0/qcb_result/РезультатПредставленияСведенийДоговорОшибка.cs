@@ -6,15 +6,6 @@
     [System.Diagnostics.DebuggerStepThrough()]
     [System.ComponentModel.DesignerCategory("code")]
     [System.Xml.Serialization.XmlType(AnonymousType = true)]
-    public class РезультатПредставленияСведенийДоговорОшибка
-    {
-
-        /// <remarks/>
-        [System.Xml.Serialization.XmlAttribute]
-        public string Код { get; set; }
-
-        /// <remarks/>
-        [System.Xml.Serialization.XmlText()]
-        public string Value { get; set; }
-    }
+    public class РезультатПредставленияСведенийДоговорОшибка : Ошибка
+    { }
 }

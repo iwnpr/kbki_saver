@@ -12,7 +12,7 @@
 
         /// <remarks/>
         [System.Xml.Serialization.XmlElement("ИдентификаторОтвета", typeof(РезультатИдентификаторОтвета))]
-        [System.Xml.Serialization.XmlElement("Ошибка", typeof(РезультатОшибка))]
+        [System.Xml.Serialization.XmlElement("Ошибка", typeof(Ошибка))]
         [System.Xml.Serialization.XmlElement("Успешно", typeof(РезультатУспешно))]
         public object РезультатДанные { get; set; }
 
@@ -23,5 +23,47 @@
         /// <remarks/>
         [System.Xml.Serialization.XmlAttribute()]
         public string ОГРН { get; set; }
+
+        public static Результат CreateSuccess(string psrn, string requestId, System.DateTime requestDate)
+        {
+            return new Результат
+            {
+                ОГРН = psrn,
+                РезультатДанные = new РезультатУспешно
+                {
+                    ИдентификаторЗапроса = requestId,
+                    ДатаЗапроса = requestDate
+                }
+            };
+        }
+
+        public static Результат CreateError(string psrn, string errorCode, string errorText)
+        {
+            return new Результат
+            {
+                ОГРН = psrn,
+                РезультатДанные = new Ошибка
+                {
+                    Код = errorCode,
+                    Value = errorText
+                }
+            };
+        }
+
+        public static Результат CreateTicket(string psrn, string requestId, System.DateTime requestDate, string responseId, long? readyInSeconds = null)
+        {
+            return new Результат
+            {
+                ОГРН = psrn,
+                РезультатДанные = new РезультатИдентификаторОтвета
+                {
+                    ИдентификаторЗапроса = requestId,
+                    ДатаЗапроса = requestDate,
+                    Value = responseId,
+                    ВремяГотовности = readyInSeconds.GetValueOrDefault(),
+                    ВремяГотовностиSpecified = readyInSeconds.HasValue
+                }
+            };
+        }
     }
 }
