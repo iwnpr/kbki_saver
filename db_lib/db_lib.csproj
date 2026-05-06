@@ -35,6 +35,7 @@
 
   <ItemGroup>
     <Folder Include="Entities\" />
+    <Folder Include="v3_0\" />
   </ItemGroup>
 
 </Project>
