@@ -26,8 +26,16 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
 
     private static string? TryParseXmlBytesToString(byte[]? bytes)
     {
-        try { return bytes is not null ? XDocument.Load(new MemoryStream(bytes)).ToString() : null; }
-        catch { return null; }
+        try
+        {
+            return bytes is not null
+                ? XDocument.Load(new MemoryStream(bytes)).ToString()
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private T? TryDeserialize<T>(string? value) where T : class

@@ -38,19 +38,33 @@ namespace db_lib.Services.Implementations
 
         private static bool IsV3(HashEntry[]? hashset)
         {
-            if (hashset is null) return false;
+            if (hashset is null)
+                return false;
 
             var apiVersion = hashset.FirstOrDefault(x => x.Name == "api_version").Value.ToString();
             var contractVersion = hashset.FirstOrDefault(x => x.Name == "contract_version").Value.ToString();
 
-            if (apiVersion == "3.0" || contractVersion == "3.0")
+            if (IsVersion3X(apiVersion) || IsVersion3X(contractVersion))
                 return true;
 
             var xml = hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString();
-            if (string.IsNullOrWhiteSpace(xml))
-                xml = hashset.FirstOrDefault(x => x.Name == "response_xml").Value.ToString();
+            xml = string.IsNullOrWhiteSpace(xml)
+                ? hashset.FirstOrDefault(x => x.Name == "response_xml").Value.ToString()
+                : xml;
 
-            return !string.IsNullOrWhiteSpace(xml) && xml.Contains("Версия=\"3.0\"", StringComparison.OrdinalIgnoreCase);
+            return !string.IsNullOrWhiteSpace(xml) && xml.Contains("Версия=\"3.", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsVersion3X(string? version)
+    => !string.IsNullOrWhiteSpace(version) && version.StartsWith("3.", StringComparison.Ordinal);
+
+        private async Task ProduceRequestXmlIfExists(HashEntry[] hashset, string key)
+        {
+            var requestXml = hashset.FirstOrDefault(x => x.Name == "request_xml");
+            if (!requestXml.Name.HasValue || requestXml.Value.IsNullOrEmpty)
+                return;
+
+            await ProduceToEventTopic(requestXml.Value.ToString(), key);
         }
 
         public async Task SaveCriticalError(string key)
@@ -84,8 +98,7 @@ namespace db_lib.Services.Implementations
                     {
                         if (await _repositoryV3.CreateDlRequestV3(key, hashset))
                         {
-                            if (hashset.FirstOrDefault(x => x.Name == "request_xml").Name.HasValue)
-                                await ProduceToEventTopic(hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString(), key);
+                            await ProduceRequestXmlIfExists(hashset, key);
 
                             await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                             return;
@@ -93,16 +106,12 @@ namespace db_lib.Services.Implementations
                         break;
                     }
                     var ErrorCode = (int)hashset.FirstOrDefault(x => x.Name == "error_code").Value;
-                    var test = !hashset.FirstOrDefault(x => x.Name == "qbch_tasks_end_date_time").Value.IsNull;
-                    var test2 = ErrorCode == 12;
-                    var test3 = !(ErrorCode == 12 && !hashset.FirstOrDefault(x => x.Name == "qbch_tasks_end_date_time").Value.IsNull);
 
                     if (!(ErrorCode == 12 && !hashset.Any(x => x.Name == "qbch_tasks_end_date_time")))
                     {
                         if (await _repository.CreateDlRequest(key, hashset))
                         {
-                            if (hashset.FirstOrDefault(x => x.Name == "request_xml").Name.HasValue)
-                                await ProduceToEventTopic(hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString(), key);
+                            await ProduceRequestXmlIfExists(hashset, key);
 
                             await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                             return;
@@ -174,8 +183,8 @@ namespace db_lib.Services.Implementations
                                 {
                                     if (await _repositoryV3.CreateDlRequestV3(key, hashset))
                                     {
-                                        if (hashset.FirstOrDefault(x => x.Name == "request_xml").Name.HasValue)
-                                            await ProduceToEventTopic(hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString(), key);
+
+                                        await ProduceRequestXmlIfExists(hashset, key);
 
                                         await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                                         return;
@@ -185,8 +194,7 @@ namespace db_lib.Services.Implementations
 
                                 if (await _repository.CreateDlRequest(key, hashset))
                                 {
-                                    if (hashset.FirstOrDefault(x => x.Name == "request_xml").Name.HasValue)
-                                        await ProduceToEventTopic(hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString(), key);
+                                    await ProduceRequestXmlIfExists(hashset, key);
 
                                     await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                                     return;
