@@ -1,6 +1,7 @@
 ﻿using cache_lib.Interfaces;
 using Confluent.Kafka;
 using db_lib.Services.Interfaces;
+using db_lib.Services.Interfaces.V3;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
@@ -20,6 +21,7 @@ namespace db_lib.Services.Implementations
     ILogger<SaverService> logger,
     IProducer<Null, string> producer,
     IRepository repository,
+    IRepositoryV3 repositoryV3,
     IConfiguration config,
     string? errorTopic) : ISaverService
     {
@@ -27,11 +29,29 @@ namespace db_lib.Services.Implementations
         private readonly ICacheService _cacheService = cacheService;
         private readonly string? _errorTopic = errorTopic;
         private readonly IProducer<Null, string> _producer = producer;
+        private readonly IRepositoryV3 _repositoryV3 = repositoryV3;
         private readonly IRepository _repository = repository;
         private readonly IEnumerable<string> BKIPSRNList = config.GetSection("QBCH").GetChildren().Select(x => x.GetValue<string>("Ogrn") ?? string.Empty);
         private readonly int _DlAnswerExpirationMin = config.GetValue<int>("RedisCache:QBCHRequestExpirationMin");
         private readonly string? _eventTopic = config.GetValue<string>("Kafka:EventTopic");
 
+
+        private static bool IsV3(HashEntry[]? hashset)
+        {
+            if (hashset is null) return false;
+
+            var apiVersion = hashset.FirstOrDefault(x => x.Name == "api_version").Value.ToString();
+            var contractVersion = hashset.FirstOrDefault(x => x.Name == "contract_version").Value.ToString();
+
+            if (apiVersion == "3.0" || contractVersion == "3.0")
+                return true;
+
+            var xml = hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString();
+            if (string.IsNullOrWhiteSpace(xml))
+                xml = hashset.FirstOrDefault(x => x.Name == "response_xml").Value.ToString();
+
+            return !string.IsNullOrWhiteSpace(xml) && xml.Contains("Версия=\"3.0\"", StringComparison.OrdinalIgnoreCase);
+        }
 
         public async Task SaveCriticalError(string key)
         {
@@ -59,6 +79,19 @@ namespace db_lib.Services.Implementations
             switch (redisKey[1])
             {
                 case "dlrequest":
+
+                    if (IsV3(hashset))
+                    {
+                        if (await _repositoryV3.CreateDlRequestV3(key, hashset))
+                        {
+                            if (hashset.FirstOrDefault(x => x.Name == "request_xml").Name.HasValue)
+                                await ProduceToEventTopic(hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString(), key);
+
+                            await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
+                            return;
+                        }
+                        break;
+                    }
                     var ErrorCode = (int)hashset.FirstOrDefault(x => x.Name == "error_code").Value;
                     var test = !hashset.FirstOrDefault(x => x.Name == "qbch_tasks_end_date_time").Value.IsNull;
                     var test2 = ErrorCode == 12;
@@ -76,9 +109,20 @@ namespace db_lib.Services.Implementations
                         }
                     }
                     break;
+
                 case "dlanswer":
                     if (hashset is not null)
                     {
+                        if (IsV3(hashset))
+                        {
+                            if (await _repositoryV3.CreateDlAnswerV3(key, hashset))
+                            {
+                                await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
+                                return;
+                            }
+                            break;
+                        }
+
                         if (await _repository.CreateDlAnswer(key, hashset))
                         {
                             await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
@@ -86,6 +130,17 @@ namespace db_lib.Services.Implementations
                         }
                     }
                     break;
+
+                case "dlput":
+                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutV3(key, hashset))
+                        return;
+                    break;
+
+                case "dlputanswer":
+                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutAnswerV3(key, hashset))
+                        return;
+                    break;
+
                 default:
                     break;
             }
@@ -115,6 +170,19 @@ namespace db_lib.Services.Implementations
 
                             if (!(ErrorCode == 12 && !hashset.Any(x => x.Name == "qbch_tasks_end_date_time")))
                             {
+                                if (IsV3(hashset))
+                                {
+                                    if (await _repositoryV3.CreateDlRequestV3(key, hashset))
+                                    {
+                                        if (hashset.FirstOrDefault(x => x.Name == "request_xml").Name.HasValue)
+                                            await ProduceToEventTopic(hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString(), key);
+
+                                        await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
+                                        return;
+                                    }
+                                    break;
+                                }
+
                                 if (await _repository.CreateDlRequest(key, hashset))
                                 {
                                     if (hashset.FirstOrDefault(x => x.Name == "request_xml").Name.HasValue)
@@ -138,6 +206,15 @@ namespace db_lib.Services.Implementations
 
                     if (hashset is not null)
                     {
+                        if (IsV3(hashset))
+                        {
+                            if (await _repositoryV3.CreateDlAnswerV3(key, hashset))
+                            {
+                                await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
+                                return;
+                            }
+                        }
+
                         if (await _repository.CreateDlAnswer(key, hashset))
                         {
                             await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
@@ -146,6 +223,19 @@ namespace db_lib.Services.Implementations
                     }
 
                     break;
+
+                case "dlput":
+                    hashset = await _cacheService.TryGetHashAll(key);
+                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutV3(key, hashset))
+                        return;
+                    break;
+
+                case "dlputanswer":
+                    hashset = await _cacheService.TryGetHashAll(key);
+                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutAnswerV3(key, hashset))
+                        return;
+                    break;
+
                 default:
                     break;
             }

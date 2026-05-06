@@ -3,7 +3,9 @@ using cache_lib.Interfaces;
 using Confluent.Kafka;
 using db_lib.Entities;
 using db_lib.Services.Implementations;
+using db_lib.Services.Implementations.V3;
 using db_lib.Services.Interfaces;
+using db_lib.Services.Interfaces.V3;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -148,10 +150,12 @@ else
         o.GetRequiredService<ILogger<SaverService>>(),
         producer,
         o.GetRequiredService<IRepository>(),
+        o.GetRequiredService<IRepositoryV3>(),
         o.GetRequiredService<IConfiguration>(),
         errorTopic));
     services.AddScoped<ICacheService, CacheService>();
     services.AddSingleton<IXmlService, XmlService>();
+    services.AddTransient<IRepositoryV3, RepositoryV3>();
     services.AddTransient<IRepository, Repository>();
     services.AddSingleton<IBKIRequisitsHandler, BKIRequsits>();
     services.AddLogging(builder => builder.AddSerilog(new LoggerConfiguration().ReadFrom.Configuration(configuration).CreateLogger()));
