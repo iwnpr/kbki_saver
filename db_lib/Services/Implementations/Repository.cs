@@ -5,11 +5,10 @@ using db_lib.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using QBCH_lib.CommonTypes.Api;
-using QBCH_lib.qcb_xml.v3_0.CommonTypes;
-using QBCH_lib.qcb_xml.v3_0.Enums;
-using QBCH_lib.qcb_xml.v3_0.qcb_answer;
-using QBCH_lib.qcb_xml.v3_0.qcb_request;
-using КБКИКласс = QBCH_lib.qcb_xml.v3_0.qcb_answer.КБКИ;
+using QBCH_lib.qcb_xml.v2_0.CommonTypes;
+using QBCH_lib.qcb_xml.v2_0.Enums;
+using QBCH_lib.qcb_xml.v2_0.qcb_answer;
+using QBCH_lib.qcb_xml.v2_0.qcb_request;
 using QBCHService_lib.Models.DTOs;
 using StackExchange.Redis;
 using System.Globalization;
@@ -172,7 +171,7 @@ namespace db_lib.Services.Implementations
         /// </summary>
         /// <param name="psrn">Огрн</param>
         /// <returns>Пользователь</returns>
-        private async Task<TdUser?> GetOrCreateUser(ЗапросСведенийЗапрос Запрос, List<TdUser> users)
+        private async Task<TdUser?> GetOrCreateUser(Запрос Запрос, List<TdUser> users)
         {
             TdUser? user = null;
 
@@ -212,7 +211,7 @@ namespace db_lib.Services.Implementations
                     user = CreateUserLegal(
                         ЮЛ.ПолноеНаименование,
                         ЮЛ?.СокращенноеНаименование,
-                        ЮЛ?.ИноеНаименование.ToString(),
+                        ЮЛ?.ИноеНаименование,
                         ЮЛ?.ИНН,
                         ЮЛ?.ОГРН,
                         1);
@@ -346,7 +345,7 @@ namespace db_lib.Services.Implementations
             }
 
             //ЗапросСведений template = ЗапросСведений;
-            List<ЗапросСведенийЗапрос> запросы = ЗапросСведений.Запрос;
+            List<Запрос> запросы = ЗапросСведений.Запрос;
 
             //template.Запрос = [];
             TeRequest teRequest;
@@ -381,7 +380,7 @@ namespace db_lib.Services.Implementations
         /// </summary>
         /// <param name="request"></param>
         /// <returns></returns>
-        private async Task AddSubject(ЗапросСведенийЗапрос request, TeRequest teRequest)
+        private async Task AddSubject(Запрос request, TeRequest teRequest)
         {
             TeSubject subject = new()
             {
@@ -404,7 +403,7 @@ namespace db_lib.Services.Implementations
         /// <param name="request"></param>
         /// <param name="subject"></param>
         /// <returns></returns>
-        private static IEnumerable<TeSubjectsDocument> AddSubjectDocs(ЗапросСведенийЗапрос request, TeSubject subject) =>
+        private static IEnumerable<TeSubjectsDocument> AddSubjectDocs(Запрос request, TeSubject subject) =>
             request.Субъект?.ДокументЛичности?.Select(x => new TeSubjectsDocument()
             {
                 DocTypeId = MapDocType(x.КодДУЛ),
@@ -421,7 +420,7 @@ namespace db_lib.Services.Implementations
         /// <param name="request"></param>
         /// <param name="subject"></param>
         /// <returns></returns>
-        private static IEnumerable<TeSubjectsFullName> AddSubjectFIO(ЗапросСведенийЗапрос request, TeSubject subject) =>
+        private static IEnumerable<TeSubjectsFullName> AddSubjectFIO(Запрос request, TeSubject subject) =>
             request.Субъект?.ФИО?.Select(x => new TeSubjectsFullName()
             {
                 FirstName = x.Имя,
@@ -724,7 +723,7 @@ namespace db_lib.Services.Implementations
         /// <param name="xmlText"></param>
         /// <param name="ourBureauOgrn"></param>
         /// <returns></returns>
-        private static int? MapAmpResponseType(КБКИКласс? qbch, string? ourPSRN)
+        private static int? MapAmpResponseType(КБКИ? qbch, string? ourPSRN)
         {
             if (qbch is null)
                 return null;
@@ -767,7 +766,7 @@ namespace db_lib.Services.Implementations
         /// </summary>
         /// <param name="result"></param>
         /// <returns></returns>
-        private static int? MapSpResponseType(КБКИКласс? qbch)
+        private static int? MapSpResponseType(КБКИ? qbch)
         {
             if (qbch is null)
                 return null;
