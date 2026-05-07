@@ -1,15 +1,12 @@
 ﻿using db_lib.Entities;
+using db_lib.Models.DTO;
 using db_lib.Services.Interfaces.V3;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using QBCH.Lib.qcb_xml.v3_0;
 using StackExchange.Redis;
-using System;
-using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Text.Json;
 using System.Xml.Linq;
 using Xml_service_lib;
 
@@ -61,9 +58,120 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
         catch (Exception ex) { _logger.LogCritical(ex, "Ошибка записи V3 в БД. Ключ {key}", hashKey); return false; }
     }
 
-    public Task<bool> CreateDlRequestV3(string hashKey, HashEntry[]? hashset)
+    public async Task<bool> CreateDlRequestV3(string hashKey, HashEntry[]? hashset)
     {
-        throw new NotImplementedException();
+        if (hashset is null)
+        {
+            _logger.LogCritical("не удалось считать данные из Redis");
+            return false;
+        }
+
+        var requestXml = hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString();
+        var request = TryDeserialize<ЗапросСведений>(requestXml);
+        var errorCode = int.TryParse(hashset.FirstOrDefault(x => x.Name == "error_code").Value.ToString(), out var parsedError) ? parsedError : 0;
+        var trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
+
+        var dlrequest = new TeDlrequest
+        {
+            ResponseGuid = hashset.FirstOrDefault(x => x.Name == "response_guid").Value.ToString()!,
+            AbonentId = trAbonent?.KeyId,
+            IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
+            RequestCertificateData = hashset.FirstOrDefault(x => x.Name == "request_certificate_data").Value,
+            RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
+            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            RequestSignedData = hashset.FirstOrDefault(x => x.Name == "request_signed_data").Value,
+            RequestXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "request_xml").Value),
+            ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
+            ErrorCode = errorCode,
+            ErrorMessage = hashset.FirstOrDefault(x => x.Name == "error_message").Value,
+            RequestId = request?.ИдентификаторЗапроса,
+            InformationCode = request is not null ? (int)request.КодСведений : null,
+            RequestMode = request is not null ? (int)request.РежимЗапроса : null,
+            RequestType = request is not null ? (int)request.ТипЗапроса : null,
+            QbchTasksEndDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "qbch_tasks_end_date_time").Value.ToString()),
+            QbchTasksResultXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "qbch_tasks_aggregate_xml").Value),
+            ResponseSignedData = hashset.FirstOrDefault(x => x.Name == "response_signed_data").Value,
+            ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()),
+            ResponseXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "response_xml").Value)
+        };
+
+        await _context.TeDlrequests.AddAsync(dlrequest);
+
+        if (request?.Запрос is not null)
+        {
+            var packageErrorJson = hashset.FirstOrDefault(x => x.Name == "package_error").Value.ToString();
+            var packageErrors = string.IsNullOrWhiteSpace(packageErrorJson)
+                ? null
+                : JsonSerializer.Deserialize<List<PackageError>>(packageErrorJson);
+
+            foreach (var nested in request.Запрос)
+            {
+                var orderNum = int.TryParse(nested.ПорядковыйНомер, out var parsedOrder) ? parsedOrder : 0;
+                var packageError = packageErrors?.FirstOrDefault(e => e.Id == orderNum);
+
+                var teRequest = new TeRequest
+                {
+                    Dlrequest = dlrequest,
+                    OrderNum = orderNum,
+                    ErrorCode = packageError?.error_code ?? 0,
+                    ErrorMessage = packageError?.error_message,
+                    RequestXml = _xmlService.SerializeAsString(nested)?.Trim()
+                };
+
+                await _context.TeRequests.AddAsync(teRequest);
+                await AddSubject(nested, teRequest);
+            }
+        }
+
+        return await SaveAsync(hashKey);
+    }
+
+    private async Task AddSubject(ЗапросСведенийЗапрос request, TeRequest teRequest)
+    {
+        if (request.Субъект is null)
+            return;
+
+        var normalizedSnils = string.IsNullOrWhiteSpace(request.Субъект.СНИЛС)
+            ? null
+            : new string(request.Субъект.СНИЛС.Where(char.IsDigit).ToArray());
+
+        var subject = new TeSubject
+        {
+            Request = teRequest,
+            BirthDay = request.Субъект.ДатаРождения == default ? null : DateOnly.FromDateTime(request.Субъект.ДатаРождения),
+            Inn = request.Субъект.ИНН?.Value ?? request.Субъект.ИнНомер,
+            Snils = normalizedSnils?.Length == 11 ? normalizedSnils : request.Субъект.СНИЛС,
+            InnChecked = request.Субъект.ИНН?.ПризнакПроверки == ТипИННФЛсПризнакомПризнакПроверки.Item1,
+            InnForeign = !string.IsNullOrWhiteSpace(request.Субъект.ИнНомер)
+        };
+
+        await _context.TeSubjects.AddAsync(subject);
+
+        if (request.Субъект.ДокументЛичности is not null)
+        {
+            var docs = request.Субъект.ДокументЛичности.Select(x => new TeSubjectsDocument
+            {
+                DocTypeId = XmlEnumHelper.GetXmlEnumValue(x.КодДУЛ),
+                DocDateIssue = DateOnly.FromDateTime(x.ДатаВыдачи),
+                DocSeries = x.Серия,
+                DocNumber = x.Номер,
+                CountryCode = int.TryParse(x.Гражданство, out var countryCode) ? countryCode : null,
+                Subject = subject
+            });
+            await _context.TeSubjectsDocuments.AddRangeAsync(docs);
+        }
+
+        if (request.Субъект.ФИО is not null)
+        {
+            var fio = request.Субъект.ФИО.Select(x => new TeSubjectsFullName
+            {
+                FirstName = x.Имя,
+                LastName = x.Фамилия,
+                MiddleName = x.Отчество,
+                Subject = subject
+            });
+            await _context.TeSubjectsFullNames.AddRangeAsync(fio);
+        }
     }
 
     public Task<bool> CreateDlAnswerV3(string hashKey, HashEntry[]? hashset)
