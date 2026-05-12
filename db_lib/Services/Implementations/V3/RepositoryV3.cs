@@ -173,9 +173,96 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
         }
     }
 
-    public Task<bool> CreateDlAnswerV3(string hashKey, HashEntry[]? hashset)
+    public async Task<bool> CreateDlAnswerV3(string hashKey, HashEntry[]? hashset)
     {
-        throw new NotImplementedException();
+        if (hashset is null)
+        {
+            _logger.LogCritical("не удалось считать данные из Redis");
+            return false;
+        }
+
+        var responseXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "response_xml").Value);
+        var trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
+        var errorCode = int.TryParse(hashset.FirstOrDefault(x => x.Name == "error_code").Value.ToString(), out var parsedErrorCode)
+            ? parsedErrorCode
+            : 0;
+
+        var dlanswer = new TeDlanswer
+        {
+            ResponseGuid = hashset.FirstOrDefault(x => x.Name == "response_guid").Value.ToString(),
+            TempGuid = hashset.FirstOrDefault(x => x.Name == "temp_guid").Value.ToString() ?? string.Empty,
+            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
+            ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
+            RequestCertificateData = hashset.FirstOrDefault(x => x.Name == "request_certificate_data").Value,
+            IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
+            ResponseXml = responseXml,
+            ResponseSignedData = hashset.FirstOrDefault(x => x.Name == "response_signed_data").Value,
+            ErrorCode = errorCode,
+            ErrorMessage = hashset.FirstOrDefault(x => x.Name == "error_message").Value,
+            AbonentId = trAbonent?.KeyId
+        };
+
+        await _context.TeDlanswers.AddAsync(dlanswer);
+
+        if (!string.IsNullOrWhiteSpace(responseXml))
+        {
+            var isReceipt = TryDeserialize<Результат>(responseXml) is not null;
+            if (!isReceipt)
+            {
+                var answer = TryDeserialize<ОтветНаЗапросСведений>(responseXml);
+                if (answer is not null)
+                {
+                    foreach (var info in answer.Сведения ?? [])
+                    {
+                        // Явно проходим все блоки версии 3.0: титульная часть, КБКИ, обязательства,
+                        // сведения о запрете и антифрод-сведения. На этом шаге проверяем корректную
+                        // десериализацию и отделяем их от служебных квитанций.
+                        _ = info.ТитульнаяЧасть;
+                        foreach (var qbki in info.КБКИ ?? [])
+                        {
+                            _ = qbki.ПризнакНаличияКИSpecified;
+
+                            for (var i = 0; i < (qbki.Items?.Length ?? 0); i++)
+                            {
+                                var item = qbki.Items![i];
+                                var itemType = qbki.ItemsElementName?[i];
+
+                                if (item is ОтветНаЗапросСведенийСведенияКБКИОбязательства obligations)
+                                {
+                                    _ = obligations.БКИ;
+                                }
+
+                                if (item is ОтветНаЗапросСведенийСведенияКБКИУсловияЗапрета denyInfo)
+                                {
+                                    _ = denyInfo.Условие;
+                                }
+
+                                if (item is ОтветНаЗапросСведенийСведенияКБКИСведенияДляПредупреждения antiFraud)
+                                {
+                                    foreach (var antiFraudBki in antiFraud.БКИ ?? [])
+                                    {
+                                        foreach (var claim in antiFraudBki.ОбращениеОбязательство ?? [])
+                                        {
+                                            _ = claim.КодИсточника;
+                                            _ = claim.СтадияРассмотрения;
+                                            _ = claim.ДатаСтадии;
+                                            _ = claim.СуммаЗайма;
+                                            _ = claim.ПричинаОтказа;
+                                        }
+                                    }
+                                }
+
+                                _ = itemType;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return await SaveAsync(hashKey);
     }
 
     public Task<bool> CreateDlPutV3(string hashKey, HashEntry[]? hashset)
