@@ -27,8 +27,7 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
         {
             return bytes is not null
                 ? XDocument.Load(new MemoryStream(bytes)).ToString()
-                : null;
-        }
+                : null; }
         catch
         {
             return null;
