@@ -265,9 +265,101 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
         return await SaveAsync(hashKey);
     }
 
-    public Task<bool> CreateDlPutV3(string hashKey, HashEntry[]? hashset)
+    public async Task<bool> CreateDlPutV3(string hashKey, HashEntry[]? hashset)
     {
-        throw new NotImplementedException();
+        if (hashset is null)
+        {
+            _logger.LogCritical("не удалось считать данные из Redis");
+            return false;
+        }
+
+        var requestXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "request_xml").Value);
+        var request = TryDeserialize<ПредставлениеСведений>(requestXml);
+        var trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
+        var errorCode = int.TryParse(hashset.FirstOrDefault(x => x.Name == "error_code").Value.ToString(), out var parsedErrorCode)
+            ? parsedErrorCode
+            : 0;
+
+        var addCommandsCount = 0;
+        var deleteCommandsCount = 0;
+
+        foreach (var info in request?.Сведения ?? [])
+        {
+            switch (info.Item)
+            {
+                case ПредставлениеСведенийСведенияДоговор contract:
+                    {
+                        _ = contract.Субъект;
+                        switch (contract.Item)
+                        {
+                            case ТипДоговор addContract:
+                                addCommandsCount++;
+                                _ = addContract.УИД;
+                                _ = addContract.Представлено;
+                                _ = addContract.СреднемесячныйПлатеж?.ЗначениеЦелое;
+                                _ = addContract.СреднемесячныйПлатеж?.Валюта;
+                                _ = addContract.СреднемесячныйПлатеж?.ДатаРасчета;
+                                _ = addContract.ПСК;
+                                _ = addContract.ДатаПрекращенияSpecified ? addContract.ДатаПрекращения : (DateTime?)null;
+                                break;
+                            case ПредставлениеСведенийСведенияДоговорУдалить deleteContract:
+                                deleteCommandsCount++;
+                                _ = deleteContract.УИД;
+                                _ = deleteContract.ДатаРасчетаSpecified ? deleteContract.ДатаРасчета : (DateTime?)null;
+                                _ = deleteContract.Причина;
+                                break;
+                        }
+                        break;
+                    }
+                case ПредставлениеСведенийСведенияОбращениеОбязательство claim:
+                    {
+                        _ = claim.Субъект;
+                        switch (claim.Item)
+                        {
+                            case ТипОбращениеОбязательство addClaim:
+                                addCommandsCount++;
+                                _ = addClaim.УИД;
+                                _ = addClaim.КодИсточника;
+                                _ = addClaim.СтадияРассмотрения;
+                                _ = addClaim.ДатаСтадии;
+                                _ = addClaim.СуммаЗайма?.ЗначениеДесятичное;
+                                _ = addClaim.СуммаЗайма?.Валюта;
+                                _ = addClaim.ПричинаОтказа;
+                                break;
+                            case ПредставлениеСведенийСведенияОбращениеОбязательствоУдалить deleteClaim:
+                                deleteCommandsCount++;
+                                _ = deleteClaim.УИД;
+                                _ = deleteClaim.СтадияРассмотренияSpecified ? deleteClaim.СтадияРассмотрения : (ushort?)null;
+                                _ = deleteClaim.Причина;
+                                break;
+                        }
+                        break;
+                    }
+            }
+        }
+
+        var dlput = new TeDlput
+        {
+            Guid = hashset.FirstOrDefault(x => x.Name == "response_guid").Value.ToString(),
+            AbonentId = trAbonent?.KeyId,
+            IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
+            RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
+            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
+            ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()),
+            RequestId = hashset.FirstOrDefault(x => x.Name == "request_id").Value.ToString(),
+            RequestXml = requestXml,
+            RequestSignedData = hashset.FirstOrDefault(x => x.Name == "request_signed_data").Value,
+            ResponseXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "response_xml").Value),
+            ResponseSignedData = hashset.FirstOrDefault(x => x.Name == "response_signed_data").Value,
+            ErrorCode = errorCode,
+            ErrorMessage = hashset.FirstOrDefault(x => x.Name == "error_message").Value,
+            AddCommandsCount = addCommandsCount,
+            DeleteCommandsCount = deleteCommandsCount
+        };
+
+        await _context.TeDlputs.AddAsync(dlput);
+        return await SaveAsync(hashKey);
     }
 
     public Task<bool> CreateDlPutAnswerV3(string hashKey, HashEntry[]? hashset)
