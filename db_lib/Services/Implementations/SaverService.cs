@@ -33,6 +33,8 @@ namespace db_lib.Services.Implementations
         private readonly IRepository _repository = repository;
         private readonly IEnumerable<string> BKIPSRNList = config.GetSection("QBCH").GetChildren().Select(x => x.GetValue<string>("Ogrn") ?? string.Empty);
         private readonly int _DlAnswerExpirationMin = config.GetValue<int>("RedisCache:QBCHRequestExpirationMin");
+        private readonly int _DlPutExpirationMin = config.GetValue<int>("RedisCache:DlPutExpirationMin");
+        private readonly int _DlPutAnswerExpirationMin = config.GetValue<int>("RedisCache:DlPutAnswerExpirationMin");
         private readonly string? _eventTopic = config.GetValue<string>("Kafka:EventTopic");
 
 
@@ -142,12 +144,18 @@ namespace db_lib.Services.Implementations
 
                 case "dlput":
                     if (IsV3(hashset) && await _repositoryV3.CreateDlPutV3(key, hashset))
+                    {
+                        await _cacheService.SetKeyExpirationInMinutes(key, _DlPutExpirationMin);
                         return;
+                    }
                     break;
 
                 case "dlputanswer":
                     if (IsV3(hashset) && await _repositoryV3.CreateDlPutAnswerV3(key, hashset))
+                    {
+                        await _cacheService.SetKeyExpirationInMinutes(key, _DlPutAnswerExpirationMin);
                         return;
+                    }
                     break;
 
                 default:
@@ -234,14 +242,30 @@ namespace db_lib.Services.Implementations
 
                 case "dlput":
                     hashset = await _cacheService.TryGetHashAll(key);
+                    if (hashset is null)
+                    {
+                        _logger.LogError("Redis hash не найден для ключа {key}", key);
+                        break;
+                    }
                     if (IsV3(hashset) && await _repositoryV3.CreateDlPutV3(key, hashset))
+                    {
+                        await _cacheService.SetKeyExpirationInMinutes(key, _DlPutExpirationMin);
                         return;
+                    }
                     break;
 
                 case "dlputanswer":
                     hashset = await _cacheService.TryGetHashAll(key);
+                    if (hashset is null)
+                    {
+                        _logger.LogError("Redis hash не найден для ключа {key}", key);
+                        break;
+                    }
                     if (IsV3(hashset) && await _repositoryV3.CreateDlPutAnswerV3(key, hashset))
+                    {
+                        await _cacheService.SetKeyExpirationInMinutes(key, _DlPutAnswerExpirationMin);
                         return;
+                    }
                     break;
 
                 default:
