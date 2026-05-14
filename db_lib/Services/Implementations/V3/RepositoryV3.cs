@@ -75,7 +75,6 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
             ResponseGuid = hashset.FirstOrDefault(x => x.Name == "response_guid").Value.ToString()!,
             AbonentId = trAbonent?.KeyId,
             IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
-            RequestCertificateData = hashset.FirstOrDefault(x => x.Name == "request_certificate_data").Value,
             RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
             RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.UtcNow,
             RequestSignedData = hashset.FirstOrDefault(x => x.Name == "request_signed_data").Value,
@@ -195,7 +194,6 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
             ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
             ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()) ?? DateTime.UtcNow,
             RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
-            RequestCertificateData = hashset.FirstOrDefault(x => x.Name == "request_certificate_data").Value,
             IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
             ResponseXml = responseXml,
             ResponseSignedData = hashset.FirstOrDefault(x => x.Name == "response_signed_data").Value,
@@ -362,9 +360,86 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
         return await SaveAsync(hashKey);
     }
 
-    public Task<bool> CreateDlPutAnswerV3(string hashKey, HashEntry[]? hashset)
+    public async Task<bool> CreateDlPutAnswerV3(string hashKey, HashEntry[]? hashset)
     {
-        throw new NotImplementedException();
+        if (hashset is null)
+        {
+            _logger.LogCritical("не удалось считать данные из Redis");
+            return false;
+        }
+
+        var responseXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "response_xml").Value);
+        var trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
+        var errorCode = int.TryParse(hashset.FirstOrDefault(x => x.Name == "error_code").Value.ToString(), out var parsedErrorCode)
+            ? parsedErrorCode
+            : 0;
+
+        var dlPutAnswer = new TeDlputanswer
+        {
+            TempGuid = hashset.FirstOrDefault(x => x.Name == "temp_guid").Value.ToString() ?? string.Empty,
+            Guid = hashset.FirstOrDefault(x => x.Name == "response_guid").Value.ToString(),
+            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
+            ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
+            IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
+            ResponseXml = responseXml,
+            ResponseSignedData = hashset.FirstOrDefault(x => x.Name == "response_signed_data").Value,
+            ErrorCode = errorCode,
+            ErrorMessage = hashset.FirstOrDefault(x => x.Name == "error_message").Value,
+            AbonentId = trAbonent?.KeyId
+        };
+
+        await _context.TeDlputanswers.AddAsync(dlPutAnswer);
+
+        if (!string.IsNullOrWhiteSpace(responseXml))
+        {
+            var putAnswer = TryDeserialize<РезультатПредставленияСведений>(responseXml);
+            if (putAnswer is not null)
+            {
+                foreach (var processingResult in putAnswer.Результат ?? [])
+                {
+                    switch (processingResult.Item)
+                    {
+                        case РезультатПредставленияСведенийРезультатДоговор contractResult:
+                            {
+                                _ = contractResult.УИД;
+                                _ = contractResult.Операция;
+                                _ = contractResult.ДатаРасчетаSpecified ? contractResult.ДатаРасчета : (DateTime?)null;
+                                _ = contractResult.Item is not ТипОшибка;
+                                _ = contractResult.Item is ТипОшибка contractError
+                                    ? int.TryParse(contractError.Код, out var errorCodeNumber) ? errorCodeNumber : 99
+                                    : 0;
+                                _ = (contractResult.Item as ТипОшибка)?.Value;
+                                break;
+                            }
+                        case РезультатПредставленияСведенийРезультатОбращениеОбязательство antiFraudResult:
+                            {
+                                _ = antiFraudResult.УИД;
+                                _ = antiFraudResult.Операция;
+                                _ = antiFraudResult.СтадияРассмотренияSpecified ? antiFraudResult.СтадияРассмотрения : (ushort?)null;
+                                _ = antiFraudResult.Item is not ТипОшибка;
+                                _ = antiFraudResult.Item is ТипОшибка antiFraudError
+                                    ? int.TryParse(antiFraudError.Код, out var errorCodeNumber) ? errorCodeNumber : 99
+                                    : 0;
+                                _ = (antiFraudResult.Item as ТипОшибка)?.Value;
+                                break;
+                            }
+                    }
+                }
+            }
+            else
+            {
+                var receipt = TryDeserialize<Результат>(responseXml);
+                if (receipt?.Item is ТипОшибка receiptError)
+                {
+                    _ = int.TryParse(receiptError.Код, out var receiptErrorCode) ? receiptErrorCode : 99;
+                    _ = receiptError.Value;
+                }
+            }
+        }
+
+        return await SaveAsync(hashKey);
     }
 }
 
