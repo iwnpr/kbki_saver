@@ -27,7 +27,8 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
         {
             return bytes is not null
                 ? XDocument.Load(new MemoryStream(bytes)).ToString()
-                : null; }
+                : null;
+        }
         catch
         {
             return null;
@@ -124,54 +125,6 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
         return await SaveAsync(hashKey);
     }
 
-    private async Task AddSubject(ЗапросСведенийЗапрос request, TeRequest teRequest)
-    {
-        if (request.Субъект is null)
-            return;
-
-        var normalizedSnils = string.IsNullOrWhiteSpace(request.Субъект.СНИЛС)
-            ? null
-            : new string(request.Субъект.СНИЛС.Where(char.IsDigit).ToArray());
-
-        var subject = new TeSubject
-        {
-            Request = teRequest,
-            BirthDay = request.Субъект.ДатаРождения == default ? null : DateOnly.FromDateTime(request.Субъект.ДатаРождения),
-            Inn = request.Субъект.ИНН?.Value ?? request.Субъект.ИнНомер,
-            Snils = normalizedSnils?.Length == 11 ? normalizedSnils : request.Субъект.СНИЛС,
-            InnChecked = request.Субъект.ИНН?.ПризнакПроверки == ТипИННФЛсПризнакомПризнакПроверки.Item1,
-            InnForeign = !string.IsNullOrWhiteSpace(request.Субъект.ИнНомер)
-        };
-
-        await _context.TeSubjects.AddAsync(subject);
-
-        if (request.Субъект.ДокументЛичности is not null)
-        {
-            var docs = request.Субъект.ДокументЛичности.Select(x => new TeSubjectsDocument
-            {
-                DocTypeId = XmlEnumHelper.GetXmlEnumValue(x.КодДУЛ),
-                DocDateIssue = DateOnly.FromDateTime(x.ДатаВыдачи),
-                DocSeries = x.Серия,
-                DocNumber = x.Номер,
-                CountryCode = int.TryParse(x.Гражданство, out var countryCode) ? countryCode : null,
-                Subject = subject
-            });
-            await _context.TeSubjectsDocuments.AddRangeAsync(docs);
-        }
-
-        if (request.Субъект.ФИО is not null)
-        {
-            var fio = request.Субъект.ФИО.Select(x => new TeSubjectsFullName
-            {
-                FirstName = x.Имя,
-                LastName = x.Фамилия,
-                MiddleName = x.Отчество,
-                Subject = subject
-            });
-            await _context.TeSubjectsFullNames.AddRangeAsync(fio);
-        }
-    }
-
     public async Task<bool> CreateDlAnswerV3(string hashKey, HashEntry[]? hashset)
     {
         if (hashset is null)
@@ -203,63 +156,6 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
         };
 
         await _context.TeDlanswers.AddAsync(dlanswer);
-
-        if (!string.IsNullOrWhiteSpace(responseXml))
-        {
-            var isReceipt = TryDeserialize<Результат>(responseXml) is not null;
-            if (!isReceipt)
-            {
-                var answer = TryDeserialize<ОтветНаЗапросСведений>(responseXml);
-                if (answer is not null)
-                {
-                    foreach (var info in answer.Сведения ?? [])
-                    {
-                        // Явно проходим все блоки версии 3.0: титульная часть, КБКИ, обязательства,
-                        // сведения о запрете и антифрод-сведения. На этом шаге проверяем корректную
-                        // десериализацию и отделяем их от служебных квитанций.
-                        _ = info.ТитульнаяЧасть;
-                        foreach (var qbki in info.КБКИ ?? [])
-                        {
-                            _ = qbki.ПризнакНаличияКИSpecified;
-
-                            for (var i = 0; i < (qbki.Items?.Length ?? 0); i++)
-                            {
-                                var item = qbki.Items![i];
-                                var itemType = qbki.ItemsElementName?[i];
-
-                                if (item is ОтветНаЗапросСведенийСведенияКБКИОбязательства obligations)
-                                {
-                                    _ = obligations.БКИ;
-                                }
-
-                                if (item is ОтветНаЗапросСведенийСведенияКБКИУсловияЗапрета denyInfo)
-                                {
-                                    _ = denyInfo.Условие;
-                                }
-
-                                if (item is ОтветНаЗапросСведенийСведенияКБКИСведенияДляПредупреждения antiFraud)
-                                {
-                                    foreach (var antiFraudBki in antiFraud.БКИ ?? [])
-                                    {
-                                        foreach (var claim in antiFraudBki.ОбращениеОбязательство ?? [])
-                                        {
-                                            _ = claim.КодИсточника;
-                                            _ = claim.СтадияРассмотрения;
-                                            _ = claim.ДатаСтадии;
-                                            _ = claim.СуммаЗайма;
-                                            _ = claim.ПричинаОтказа;
-                                        }
-                                    }
-                                }
-
-                                _ = itemType;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         return await SaveAsync(hashKey);
     }
 
@@ -285,54 +181,13 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
         {
             switch (info.Item)
             {
-                case ПредставлениеСведенийСведенияДоговор contract:
-                    {
-                        _ = contract.Субъект;
-                        switch (contract.Item)
-                        {
-                            case ТипДоговор addContract:
-                                addCommandsCount++;
-                                _ = addContract.УИД;
-                                _ = addContract.Представлено;
-                                _ = addContract.СреднемесячныйПлатеж?.ЗначениеЦелое;
-                                _ = addContract.СреднемесячныйПлатеж?.Валюта;
-                                _ = addContract.СреднемесячныйПлатеж?.ДатаРасчета;
-                                _ = addContract.ПСК;
-                                _ = addContract.ДатаПрекращенияSpecified ? addContract.ДатаПрекращения : (DateTime?)null;
-                                break;
-                            case ПредставлениеСведенийСведенияДоговорУдалить deleteContract:
-                                deleteCommandsCount++;
-                                _ = deleteContract.УИД;
-                                _ = deleteContract.ДатаРасчетаSpecified ? deleteContract.ДатаРасчета : (DateTime?)null;
-                                _ = deleteContract.Причина;
-                                break;
-                        }
-                        break;
-                    }
-                case ПредставлениеСведенийСведенияОбращениеОбязательство claim:
-                    {
-                        _ = claim.Субъект;
-                        switch (claim.Item)
-                        {
-                            case ТипОбращениеОбязательство addClaim:
-                                addCommandsCount++;
-                                _ = addClaim.УИД;
-                                _ = addClaim.КодИсточника;
-                                _ = addClaim.СтадияРассмотрения;
-                                _ = addClaim.ДатаСтадии;
-                                _ = addClaim.СуммаЗайма?.ЗначениеДесятичное;
-                                _ = addClaim.СуммаЗайма?.Валюта;
-                                _ = addClaim.ПричинаОтказа;
-                                break;
-                            case ПредставлениеСведенийСведенияОбращениеОбязательствоУдалить deleteClaim:
-                                deleteCommandsCount++;
-                                _ = deleteClaim.УИД;
-                                _ = deleteClaim.СтадияРассмотренияSpecified ? deleteClaim.СтадияРассмотрения : (ushort?)null;
-                                _ = deleteClaim.Причина;
-                                break;
-                        }
-                        break;
-                    }
+                case ПредставлениеСведенийСведенияДоговор {Item: ТипДоговор}:
+                    case ПредставлениеСведенийСведенияОбращениеОбязательство {Item: ТипОбращениеОбязательство}:addCommandsCount++;
+                    break;
+
+                case ПредставлениеСведенийСведенияДоговор {Item: ПредставлениеСведенийСведенияДоговорУдалить}:
+                    case ПредставлениеСведенийСведенияОбращениеОбязательство {Item: ПредставлениеСведенийСведенияОбращениеОбязательствоУдалить}:deleteCommandsCount++;
+                    break;
             }
         }
 
@@ -391,55 +246,55 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
         };
 
         await _context.TeDlputanswers.AddAsync(dlPutAnswer);
+        return await SaveAsync(hashKey);
+    }
 
-        if (!string.IsNullOrWhiteSpace(responseXml))
+    private async Task AddSubject(ЗапросСведенийЗапрос request, TeRequest teRequest)
+    {
+        if (request.Субъект is null)
+            return;
+
+        var normalizedSnils = string.IsNullOrWhiteSpace(request.Субъект.СНИЛС)
+            ? null
+            : new string(request.Субъект.СНИЛС.Where(char.IsDigit).ToArray());
+
+        var subject = new TeSubject
         {
-            var putAnswer = TryDeserialize<РезультатПредставленияСведений>(responseXml);
-            if (putAnswer is not null)
+            Request = teRequest,
+            BirthDay = request.Субъект.ДатаРождения == default ? null : DateOnly.FromDateTime(request.Субъект.ДатаРождения),
+            Inn = request.Субъект.ИНН?.Value ?? request.Субъект.ИнНомер,
+            Snils = normalizedSnils?.Length == 11 ? normalizedSnils : request.Субъект.СНИЛС,
+            InnChecked = request.Субъект.ИНН?.ПризнакПроверки == ТипИННФЛсПризнакомПризнакПроверки.Item1,
+            InnForeign = !string.IsNullOrWhiteSpace(request.Субъект.ИнНомер)
+        };
+
+        await _context.TeSubjects.AddAsync(subject);
+
+        if (request.Субъект.ДокументЛичности is not null)
+        {
+            var docs = request.Субъект.ДокументЛичности.Select(x => new TeSubjectsDocument
             {
-                foreach (var processingResult in putAnswer.Результат ?? [])
-                {
-                    switch (processingResult.Item)
-                    {
-                        case РезультатПредставленияСведенийРезультатДоговор contractResult:
-                            {
-                                _ = contractResult.УИД;
-                                _ = contractResult.Операция;
-                                _ = contractResult.ДатаРасчетаSpecified ? contractResult.ДатаРасчета : (DateTime?)null;
-                                _ = contractResult.Item is not ТипОшибка;
-                                _ = contractResult.Item is ТипОшибка contractError
-                                    ? int.TryParse(contractError.Код, out var errorCodeNumber) ? errorCodeNumber : 99
-                                    : 0;
-                                _ = (contractResult.Item as ТипОшибка)?.Value;
-                                break;
-                            }
-                        case РезультатПредставленияСведенийРезультатОбращениеОбязательство antiFraudResult:
-                            {
-                                _ = antiFraudResult.УИД;
-                                _ = antiFraudResult.Операция;
-                                _ = antiFraudResult.СтадияРассмотренияSpecified ? antiFraudResult.СтадияРассмотрения : (ushort?)null;
-                                _ = antiFraudResult.Item is not ТипОшибка;
-                                _ = antiFraudResult.Item is ТипОшибка antiFraudError
-                                    ? int.TryParse(antiFraudError.Код, out var errorCodeNumber) ? errorCodeNumber : 99
-                                    : 0;
-                                _ = (antiFraudResult.Item as ТипОшибка)?.Value;
-                                break;
-                            }
-                    }
-                }
-            }
-            else
-            {
-                var receipt = TryDeserialize<Результат>(responseXml);
-                if (receipt?.Item is ТипОшибка receiptError)
-                {
-                    _ = int.TryParse(receiptError.Код, out var receiptErrorCode) ? receiptErrorCode : 99;
-                    _ = receiptError.Value;
-                }
-            }
+                DocTypeId = XmlEnumHelper.GetXmlEnumValue(x.КодДУЛ),
+                DocDateIssue = DateOnly.FromDateTime(x.ДатаВыдачи),
+                DocSeries = x.Серия,
+                DocNumber = x.Номер,
+                CountryCode = int.TryParse(x.Гражданство, out var countryCode) ? countryCode : null,
+                Subject = subject
+            });
+            await _context.TeSubjectsDocuments.AddRangeAsync(docs);
         }
 
-        return await SaveAsync(hashKey);
+        if (request.Субъект.ФИО is not null)
+        {
+            var fio = request.Субъект.ФИО.Select(x => new TeSubjectsFullName
+            {
+                FirstName = x.Имя,
+                LastName = x.Фамилия,
+                MiddleName = x.Отчество,
+                Subject = subject
+            });
+            await _context.TeSubjectsFullNames.AddRangeAsync(fio);
+        }
     }
 }
 

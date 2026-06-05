@@ -14,6 +14,12 @@ public partial class TdUser
 
     public int UserType { get; set; }
 
+    /// <summary>
+    /// Код вида пользователя кредитной истории по справочнику 6.2 / XSD СправочникВидыПользователя.
+    /// Не заменяет UserType: UserType отвечает за XML-ветку лица, UserTypeCode — за атрибут КодВидаПользователя.
+    /// </summary>
+    public int? UserTypeCode { get; set; }
+
     public bool IsForeign { get; set; }
 
     public string? Inn { get; set; }
@@ -57,4 +63,6 @@ public partial class TdUser
     public virtual ICollection<TeRequest> TeRequests { get; set; } = new List<TeRequest>();
 
     public virtual TrUserType UserTypeNavigation { get; set; } = null!;
+
+    public virtual TrUserTypeCode? UserTypeCodeNavigation { get; set; }
 }
