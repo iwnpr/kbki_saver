@@ -20,8 +20,6 @@ using Xml_service_lib;
 
 ThreadPool.SetMinThreads(200, 200);
 
-Environment.SetEnvironmentVariable("DOTNET_ENVIRONMENT");
-
 var environment = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT");
 
 //Подключаем файл конфигурации
