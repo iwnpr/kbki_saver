@@ -52,6 +52,8 @@ public partial class TdUser
 
     public string? DocIssuerCode { get; set; }
 
+    public string? UserTypeCodeId { get; set; }
+
     public virtual TrDocumentType? DocTypeNavigation { get; set; }
 
     public virtual ICollection<TeRequest> TeRequests { get; set; } = new List<TeRequest>();

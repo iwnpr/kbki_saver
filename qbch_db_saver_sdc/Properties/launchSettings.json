@@ -1,10 +1,10 @@
 {
   "profiles": {
     "qbch_db_saver_sdc": {
-      "commandName": "Project"
-    },
-    "Container (Dockerfile)": {
-      "commandName": "Docker"
+      "commandName": "Project",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "PreProduction"
+      }
     }
   }
 }

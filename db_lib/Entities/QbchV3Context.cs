@@ -35,7 +35,11 @@ public partial class QbchV3Context : DbContext
 
     public virtual DbSet<TeQbchTask> TeQbchTasks { get; set; }
 
+    public virtual DbSet<TeConsentPurpose> TeConsentPurposes { get; set; }
+
     public virtual DbSet<TeRequest> TeRequests { get; set; }
+
+    public virtual DbSet<TeRequestPurpose> TeRequestPurposes { get; set; }
 
     public virtual DbSet<TeResponse> TeResponses { get; set; }
 
@@ -136,6 +140,7 @@ public partial class QbchV3Context : DbContext
             entity.Property(e => e.ShortName).HasColumnName("short_name");
             entity.Property(e => e.Snils).HasColumnName("snils");
             entity.Property(e => e.UserType).HasColumnName("user_type");
+            entity.Property(e => e.UserTypeCodeId).HasColumnName("user_type_code_id");
 
             entity.HasOne(d => d.DocTypeNavigation).WithMany(p => p.TdUsers)
                 .HasForeignKey(d => d.DocType)
@@ -556,6 +561,8 @@ public partial class QbchV3Context : DbContext
                 .HasDefaultValueSql("now()")
                 .HasColumnType("timestamp without time zone")
                 .HasColumnName("inserted");
+            entity.Property(e => e.ObligationAmount).HasColumnName("obligation_amount");
+            entity.Property(e => e.ObligationAmountCurrency).HasColumnName("obligation_amount_currency");
             entity.Property(e => e.OrderNum).HasColumnName("order_num");
             entity.Property(e => e.RequestXml)
                 .HasColumnType("xml")
@@ -872,8 +879,46 @@ public partial class QbchV3Context : DbContext
                 .HasColumnName("code");
             entity.Property(e => e.Description).HasColumnName("description");
         });
+        modelBuilder.Entity<TeConsentPurpose>(entity =>
+        {
+            entity.HasKey(e => e.KeyId).HasName("te_consent_purposes_pk");
+
+            entity.ToTable("te_consent_purposes", "qbchv3");
+
+            entity.Property(e => e.KeyId)
+                .HasDefaultValueSql("nextval('qbchv3.te_consent_purposes_key_id_seq'::regclass)")
+                .HasColumnName("key_id");
+            entity.Property(e => e.PurposeId).HasColumnName("purpose_id");
+            entity.Property(e => e.RequestId).HasColumnName("request_id");
+
+            entity.HasOne(d => d.Request).WithMany(p => p.TeConsentPurposes)
+                .HasForeignKey(d => d.RequestId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("te_consent_purposes_request_fk");
+        });
+
+        modelBuilder.Entity<TeRequestPurpose>(entity =>
+        {
+            entity.HasKey(e => e.KeyId).HasName("te_request_purposes_pk");
+
+            entity.ToTable("te_request_purposes", "qbchv3");
+
+            entity.Property(e => e.KeyId)
+                .HasDefaultValueSql("nextval('qbchv3.te_request_purposes_key_id_seq'::regclass)")
+                .HasColumnName("key_id");
+            entity.Property(e => e.PurposeId).HasColumnName("purpose_id");
+            entity.Property(e => e.RequestId).HasColumnName("request_id");
+
+            entity.HasOne(d => d.Request).WithMany(p => p.TeRequestPurposes)
+                .HasForeignKey(d => d.RequestId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("te_request_purposes_request_fk");
+        });
+
         modelBuilder.HasSequence("td_permissions_key_id_seq", "qbchv3").HasMax(2147483647L);
         modelBuilder.HasSequence("td_users_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_consent_purposes_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_request_purposes_key_id_seq", "qbchv3");
         modelBuilder.HasSequence("te_cert_manage_key_id_seq", "qbchv3");
         modelBuilder.HasSequence("te_dlanswers_key_id_seq", "qbchv3");
         modelBuilder.HasSequence("te_dlputanswers_key_id_seq", "qbchv3");

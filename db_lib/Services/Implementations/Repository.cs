@@ -589,9 +589,6 @@ namespace db_lib.Services.Implementations
 
         public async Task<bool> CreateDlRequest(string HaskKey, HashEntry[]? hashset)
         {
-            // Читаем хэш из редиса
-            //HashEntry[]? hashset = await _cacheService.TryGetHashAll(HaskKey);
-
             // Провекра что хэш считан
             if (hashset is null)
             {

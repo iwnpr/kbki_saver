@@ -58,6 +58,130 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
         catch (Exception ex) { _logger.LogCritical(ex, "Ошибка записи V3 в БД. Ключ {key}", hashKey); return false; }
     }
 
+    private async Task<TdUser?> GetOrCreateUserV3(ЗапросСведенийЗапросИсточник источник, List<TdUser> users)
+    {
+        switch (источник.Item)
+        {
+            case ЗапросСведенийЗапросИсточникЮридическоеЛицо юл:
+                {
+                    var ogrnUpper = юл.ОГРН?.ToUpper();
+                    var cached = users.FirstOrDefault(x => x.Ogrn?.ToUpper() == ogrnUpper);
+                    if (cached is not null) return cached;
+
+                    var existing = await _context.TdUsers
+                        .FirstOrDefaultAsync(x => !string.IsNullOrWhiteSpace(x.Ogrn) && x.Ogrn.ToUpper() == ogrnUpper);
+
+                    if (existing is not null)
+                    {
+                        users.Add(existing);
+                        return existing;
+                    }
+
+                    var userTypeCodeId = XmlEnumHelper.GetXmlEnumValue(юл.КодВидаПользователя);
+                    var user = new TdUser
+                    {
+                        FullName = юл.ПолноеНаименование,
+                        ShortName = юл.СокращенноеНаименование,
+                        Inn = юл.ИНН,
+                        Ogrn = юл.ОГРН,
+                        UserType = 1,
+                        IsForeign = false,
+                        UserTypeCodeId = userTypeCodeId
+                    };
+                    users.Add(user);
+                    return user;
+                }
+            case ТипИП ип:
+                {
+                    var ogrnUpper = ип.ОГРНИП?.ToUpper();
+                    var cached = users.FirstOrDefault(x => x.Ogrn?.ToUpper() == ogrnUpper);
+                    if (cached is not null) return cached;
+
+                    var existing = await _context.TdUsers
+                        .FirstOrDefaultAsync(x => !string.IsNullOrWhiteSpace(x.Ogrn) && x.Ogrn.ToUpper() == ogrnUpper);
+
+                    if (existing is not null)
+                    {
+                        users.Add(existing);
+                        return existing;
+                    }
+
+                    var user = new TdUser
+                    {
+                        FirstName = ип.ФИО?.Имя,
+                        LastName = ип.ФИО?.Фамилия,
+                        MiddleName = ип.ФИО?.Отчество,
+                        BirthDate = ип.ДатаРождения == default ? null : DateOnly.FromDateTime(ип.ДатаРождения),
+                        Inn = ип.ИННИП,
+                        Ogrn = ип.ОГРНИП,
+                        Snils = ип.СНИЛС,
+                        UserType = 2,
+                        IsForeign = false
+                    };
+                    users.Add(user);
+                    return user;
+                }
+            case ЗапросСведенийЗапросИсточникИностранноеЮЛ иностранноеЮЛ:
+                {
+                    var name = иностранноеЮЛ.ПолноеНаименование;
+                    var cached = users.FirstOrDefault(x => x.FullName == name);
+                    if (cached is not null) return cached;
+
+                    var existing = await _context.TdUsers.AsNoTracking()
+                        .FirstOrDefaultAsync(x => x.FullName == name);
+
+                    if (existing is not null)
+                    {
+                        users.Add(existing);
+                        return existing;
+                    }
+
+                    var userTypeCodeId = XmlEnumHelper.GetXmlEnumValue(иностранноеЮЛ.КодВидаПользователя);
+                    var user = new TdUser
+                    {
+                        FullName = иностранноеЮЛ.ПолноеНаименование,
+                        ShortName = иностранноеЮЛ.СокращенноеНаименование,
+                        UserType = 1,
+                        IsForeign = true,
+                        UserTypeCodeId = userTypeCodeId
+                    };
+                    users.Add(user);
+                    return user;
+                }
+            case ТипИностранныйПредприниматель иностранныйИП:
+                {
+                    var name = иностранныйИП.ФИО?.Фамилия + иностранныйИП.ФИО?.Имя
+                        + иностранныйИП.ДокументЛичности?.Серия + иностранныйИП.ДокументЛичности?.Номер;
+                    var cached = users.FirstOrDefault(x => x.FullName == name);
+                    if (cached is not null) return cached;
+
+                    var existing = await _context.TdUsers.AsNoTracking()
+                        .FirstOrDefaultAsync(x => x.FullName == name);
+
+                    if (existing is not null)
+                    {
+                        users.Add(existing);
+                        return existing;
+                    }
+
+                    var user = new TdUser
+                    {
+                        FirstName = иностранныйИП.ФИО?.Имя,
+                        LastName = иностранныйИП.ФИО?.Фамилия,
+                        MiddleName = иностранныйИП.ФИО?.Отчество,
+                        BirthDate = иностранныйИП.ДатаРождения == default ? null : DateOnly.FromDateTime(иностранныйИП.ДатаРождения),
+                        FullName = name,
+                        UserType = 5,
+                        IsForeign = true
+                    };
+                    users.Add(user);
+                    return user;
+                }
+            default:
+                return null;
+        }
+    }
+
     public async Task<bool> CreateDlRequestV3(string hashKey, HashEntry[]? hashset)
     {
         if (hashset is null)
@@ -103,10 +227,16 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
                 ? null
                 : JsonSerializer.Deserialize<List<PackageError>>(packageErrorJson);
 
+            List<TdUser> users = [];
+
             foreach (var nested in request.Запрос)
             {
                 var orderNum = int.TryParse(nested.ПорядковыйНомер, out var parsedOrder) ? parsedOrder : 0;
                 var packageError = packageErrors?.FirstOrDefault(e => e.Id == orderNum);
+
+                TdUser? user = null;
+                if (nested.Источник is not null)
+                    user = await GetOrCreateUserV3(nested.Источник, users);
 
                 var teRequest = new TeRequest
                 {
@@ -114,11 +244,17 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
                     OrderNum = orderNum,
                     ErrorCode = packageError?.error_code ?? 0,
                     ErrorMessage = packageError?.error_message,
+                    User = user?.KeyId == 0 ? user : null,
+                    UserId = user?.KeyId == 0 ? null : user?.KeyId,
+                    ObligationAmount = nested.СуммаОбязательства?.Value,
+                    ObligationAmountCurrency = nested.СуммаОбязательства?.Валюта,
                     RequestXml = _xmlService.SerializeAsString(nested)?.Trim()
                 };
 
                 await _context.TeRequests.AddAsync(teRequest);
                 await AddSubject(nested, teRequest);
+                await AddConsentPurposes(nested, teRequest);
+                await AddRequestPurposes(nested, teRequest);
             }
         }
 
@@ -181,12 +317,14 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
         {
             switch (info.Item)
             {
-                case ПредставлениеСведенийСведенияДоговор {Item: ТипДоговор}:
-                    case ПредставлениеСведенийСведенияОбращениеОбязательство {Item: ТипОбращениеОбязательство}:addCommandsCount++;
+                case ПредставлениеСведенийСведенияДоговор { Item: ТипДоговор }:
+                case ПредставлениеСведенийСведенияОбращениеОбязательство { Item: ТипОбращениеОбязательство }:
+                    addCommandsCount++;
                     break;
 
-                case ПредставлениеСведенийСведенияДоговор {Item: ПредставлениеСведенийСведенияДоговорУдалить}:
-                    case ПредставлениеСведенийСведенияОбращениеОбязательство {Item: ПредставлениеСведенийСведенияОбращениеОбязательствоУдалить}:deleteCommandsCount++;
+                case ПредставлениеСведенийСведенияДоговор { Item: ПредставлениеСведенийСведенияДоговорУдалить }:
+                case ПредставлениеСведенийСведенияОбращениеОбязательство { Item: ПредставлениеСведенийСведенияОбращениеОбязательствоУдалить }:
+                    deleteCommandsCount++;
                     break;
             }
         }
@@ -296,5 +434,30 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
             await _context.TeSubjectsFullNames.AddRangeAsync(fio);
         }
     }
-}
 
+    private async Task AddConsentPurposes(ЗапросСведенийЗапрос request, TeRequest teRequest)
+    {
+        if (request.Согласие?.Цель is null) return;
+
+        var purposes = request.Согласие.Цель.Select(x => new TeConsentPurpose
+        {
+            Request = teRequest,
+            PurposeId = XmlEnumHelper.GetXmlEnumValue(x.КодЦели)
+        });
+
+        await _context.TeConsentPurposes.AddRangeAsync(purposes);
+    }
+
+    private async Task AddRequestPurposes(ЗапросСведенийЗапрос request, TeRequest teRequest)
+    {
+        if (request.Цель is null) return;
+
+        var purposes = request.Цель.Select(x => new TeRequestPurpose
+        {
+            Request = teRequest,
+            PurposeId = XmlEnumHelper.GetXmlEnumValue(x.КодЦели)
+        });
+
+        await _context.TeRequestPurposes.AddRangeAsync(purposes);
+    }
+}

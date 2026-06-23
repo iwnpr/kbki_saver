@@ -24,9 +24,17 @@ public partial class TeRequest
 
     public string? ErrorMessage { get; set; }
 
+    public double? ObligationAmount { get; set; }
+
+    public string? ObligationAmountCurrency { get; set; }
+
     public virtual TeDlrequest Dlrequest { get; set; } = null!;
 
     public virtual TrErrorCode ErrorCodeNavigation { get; set; } = null!;
+
+    public virtual ICollection<TeConsentPurpose> TeConsentPurposes { get; set; } = new List<TeConsentPurpose>();
+
+    public virtual ICollection<TeRequestPurpose> TeRequestPurposes { get; set; } = new List<TeRequestPurpose>();
 
     public virtual ICollection<TeSubject> TeSubjects { get; set; } = new List<TeSubject>();
 
