@@ -12,8 +12,4 @@ public partial class TrUserTypeCode
     public int Code { get; set; }
 
     public string? Description { get; set; }
-
-    public virtual ICollection<TdUser> TdUsers { get; set; } = new List<TdUser>();
-
-    public virtual ICollection<TrAbonent> TrAbonents { get; set; } = new List<TrAbonent>();
 }

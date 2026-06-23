@@ -24,34 +24,6 @@ namespace cache_lib.Implementations
         private readonly int _DlRequestExpirationMin;
         private readonly int _DlAnswerExpirationMin;
 
-        //private static readonly RedisValue[] fields =
-        //[
-        //    "RequestId",
-        //    "RequestTime",
-        //    "ResponseTime",
-        //    "SignedRequest",
-        //    "request",
-        //    "ErrorMessage",
-        //    "ErrorCode",
-        //    "ValidationTime",
-        //    "SignedResponse",
-        //    "IpAddress",
-        //    "Thumbprint",
-        //    "ResponseXml",
-        //    "QBCHTotalTime",
-        //    "RequestType"
-        //];
-
-        /*
-             "RedisCache:DBIndex": 0, // Default 0
-             "RedisCache:RequestIdUniqueDays": 1, // Default 1
-             "RedisCache:DlRequestExpirationMin": 480, // 8 ЧАСОВ ДО ИСПАРЕНИЯ КЛЮЧА В РЕДИСЕ ПОСЛЕ ЗАПИСИ В БД
-             "RedisCache:QBCHRequestExpirationMin": 1, // 1 МИНУТА ДО ИСПАРЕНИЯ КЛЮЧА В РЕДИСЕ ПОСЛЕ ЗАПИСИ В БД
-             "RedisCache:DlAnswerExpirationMin": 1, // 1 МИНУТА ДО ИСПАРЕНИЯ КЛЮЧА В РЕДИСЕ ПОСЛЕ ЗАПИСИ В БД
-             "RedisCache:DlPutExpirationMin": 480, // 8 ЧАСОВ ДО ИСПАРЕНИЯ КЛЮЧА В РЕДИСЕ ПОСЛЕ ЗАПИСИ В БД
-             "RedisCache:DlPutAnswerExpirationMin": 1 // 1 МИНУТА ДО ИСПАРЕНИЯ КЛЮЧА В РЕДИСЕ ПОСЛЕ ЗАПИСИ В БД
-         */
-
         /// <summary>
         /// Конструктор
         /// </summary>
@@ -120,11 +92,11 @@ namespace cache_lib.Implementations
                 }
 
                 _redisDb.KeyExpireAsync(key, TimeSpan.FromHours(_expirityHours));
-                _log.LogDebug("Redis add cache db key: {pGuid}", pKey);
+                _log.LogDebug("Добавлен хэш в Redis, ключ: {pGuid}", pKey);
             }
             catch (Exception e)
             {
-                _log.LogCritical(e,"Redis critical");
+                _log.LogCritical(e, "Ошибка добавления ключа в Redis");
                 throw;
             }
         }

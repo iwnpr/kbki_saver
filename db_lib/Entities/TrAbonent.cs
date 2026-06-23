@@ -14,11 +14,6 @@ public partial class TrAbonent
 
     public int UserType { get; set; }
 
-    /// <summary>
-    /// Код вида пользователя кредитной истории по справочнику 6.2 / XSD СправочникВидыПользователя.
-    /// </summary>
-    public int? UserTypeCode { get; set; }
-
     public string FullName { get; set; } = null!;
 
     public string ShortName { get; set; } = null!;
@@ -46,6 +41,4 @@ public partial class TrAbonent
     public virtual ICollection<TrAbonentCertificate> TrAbonentCertificates { get; set; } = new List<TrAbonentCertificate>();
 
     public virtual TrUserType UserTypeNavigation { get; set; } = null!;
-
-    public virtual TrUserTypeCode? UserTypeCodeNavigation { get; set; }
 }

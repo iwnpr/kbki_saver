@@ -12,9 +12,9 @@ using Xml_service_lib;
 
 namespace db_lib.Services.Implementations.V3;
 
-public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXmlService xmlService) : IRepositoryV3
+public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, IXmlService xmlService) : IRepositoryV3
 {
-    private readonly qbchContext _context = context;
+    private readonly QbchV3Context _context = context;
     private readonly ILogger<RepositoryV3> _logger = logger;
     private readonly IXmlService _xmlService = xmlService;
 
@@ -62,7 +62,7 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
     {
         if (hashset is null)
         {
-            _logger.LogCritical("не удалось считать данные из Redis");
+            _logger.LogCritical("Не удалось считать данные из Redis");
             return false;
         }
 
@@ -84,9 +84,9 @@ public class RepositoryV3(qbchContext context, ILogger<RepositoryV3> logger, IXm
             ErrorCode = errorCode,
             ErrorMessage = hashset.FirstOrDefault(x => x.Name == "error_message").Value,
             RequestId = request?.ИдентификаторЗапроса,
-            InformationCode = request is not null ? (int)request.КодСведений : null,
-            RequestMode = request is not null ? (int)request.РежимЗапроса : null,
-            RequestType = request is not null ? (int)request.ТипЗапроса : null,
+            InformationCode = request is not null ? int.Parse(XmlEnumHelper.GetXmlEnumValue(request.КодСведений)) : null,
+            RequestMode = request is not null ? int.Parse(XmlEnumHelper.GetXmlEnumValue(request.РежимЗапроса)) : null,
+            RequestType = request is not null ? int.Parse(XmlEnumHelper.GetXmlEnumValue(request.ТипЗапроса)) : null,
             QbchTasksEndDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "qbch_tasks_end_date_time").Value.ToString()),
             QbchTasksResultXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "qbch_tasks_aggregate_xml").Value),
             ResponseSignedData = hashset.FirstOrDefault(x => x.Name == "response_signed_data").Value,

@@ -166,50 +166,56 @@ namespace db_lib.Services.Implementations
             {
                 case RequestTypeDlRequest:
 
-                    if (IsV3(hashset))
-                    {
-                        if (await _repositoryV3.CreateDlRequestV3(key, hashset))
-                        {
-                            await ProduceRequestXmlIfExists(hashset, key);
-
-                            await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
-                            return;
-                        }
-                        break;
-                    }
                     var ErrorCode = (int)hashset.FirstOrDefault(x => x.Name == ErrorCodeField).Value;
 
                     if (!(ErrorCode == QbchErrorCodeWaitingResult && !hashset.Any(x => x.Name == QbchTasksEndDateTimeField)))
                     {
-                        if (await _repository.CreateDlRequest(key, hashset))
+                        if (IsV3(hashset))
                         {
-                            await ProduceRequestXmlIfExists(hashset, key);
+                            if (await _repositoryV3.CreateDlRequestV3(key, hashset))
+                            {
+                                await ProduceRequestXmlIfExists(hashset, key);
 
-                            await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
-                            return;
+                                await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
+                                return;
+                            }
+                            break;
+                        }
+                        else
+                        {
+                            if (await _repository.CreateDlRequest(key, hashset))
+                            {
+                                await ProduceRequestXmlIfExists(hashset, key);
+
+                                await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
+                                return;
+                            }
+                            break;
                         }
                     }
                     break;
 
                 case RequestTypeDlAnswer:
-                    if (hashset is not null)
-                    {
-                        if (IsV3(hashset))
-                        {
-                            if (await _repositoryV3.CreateDlAnswerV3(key, hashset))
-                            {
-                                await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
-                                return;
-                            }
-                            break;
-                        }
 
-                        if (await _repository.CreateDlAnswer(key, hashset))
+                    if (hashset is null)
+                        break;
+
+                    if (IsV3(hashset))
+                    {
+                        if (await _repositoryV3.CreateDlAnswerV3(key, hashset))
                         {
                             await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
                             return;
                         }
+                        break;
                     }
+
+                    if (await _repository.CreateDlAnswer(key, hashset))
+                    {
+                        await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
+                        return;
+                    }
+
                     break;
 
                 case RequestTypeDlPut:
@@ -287,6 +293,7 @@ namespace db_lib.Services.Implementations
                     while (!IsCancelled || !cts.IsCancellationRequested);
 
                     break;
+
                 case RequestTypeDlAnswer:
                     hashset = await _cacheService.TryGetHashAll(key);
 
@@ -373,12 +380,12 @@ namespace db_lib.Services.Implementations
 
                 if (result.Status == PersistenceStatus.NotPersisted)
                 {
-                    _logger.LogError("Сообщение не доставлено до брокера {key}", key);
+                    _logger.LogError("Сообщение не доставлено до EventTopic {key}", key);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex, "Ошибка produce в кафку. EventTopic.");
+                _logger.LogCritical(ex, "Ошибка записи EventTopic.");
             }
         }
     }
