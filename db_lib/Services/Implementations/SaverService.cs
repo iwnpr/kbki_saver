@@ -20,7 +20,7 @@ namespace db_lib.Services.Implementations
     ICacheService cacheService,
     ILogger<SaverService> logger,
     IProducer<Null, string> producer,
-    IRepository repository,
+    IRepository repositoryV2,
     IRepositoryV3 repositoryV3,
     IConfiguration config,
     string? errorTopic) : ISaverService
@@ -30,7 +30,7 @@ namespace db_lib.Services.Implementations
         private readonly string? _errorTopic = errorTopic;
         private readonly IProducer<Null, string> _producer = producer;
         private readonly IRepositoryV3 _repositoryV3 = repositoryV3;
-        private readonly IRepository _repository = repository;
+        private readonly IRepository _repositoryV2 = repositoryV2;
         private readonly IEnumerable<string> BKIPSRNList = config.GetSection("QBCH").GetChildren().Select(x => x.GetValue<string>("Ogrn") ?? string.Empty);
         private readonly int _DlAnswerExpirationMin = config.GetValue<int>("RedisCache:QBCHRequestExpirationMin");
         private readonly int _DlPutExpirationMin = config.GetValue<int>("RedisCache:DlPutExpirationMin");
@@ -183,7 +183,7 @@ namespace db_lib.Services.Implementations
                         }
                         else
                         {
-                            if (await _repository.CreateDlRequest(key, hashset))
+                            if (await _repositoryV2.CreateDlRequest(key, hashset))
                             {
                                 await ProduceRequestXmlIfExists(hashset, key);
 
@@ -210,7 +210,7 @@ namespace db_lib.Services.Implementations
                         break;
                     }
 
-                    if (await _repository.CreateDlAnswer(key, hashset))
+                    if (await _repositoryV2.CreateDlAnswer(key, hashset))
                     {
                         await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
                         return;
@@ -276,7 +276,7 @@ namespace db_lib.Services.Implementations
                                     break;
                                 }
 
-                                if (await _repository.CreateDlRequest(key, hashset))
+                                if (await _repositoryV2.CreateDlRequest(key, hashset))
                                 {
                                     await ProduceRequestXmlIfExists(hashset, key);
 
@@ -308,7 +308,7 @@ namespace db_lib.Services.Implementations
                             }
                         }
 
-                        if (await _repository.CreateDlAnswer(key, hashset))
+                        if (await _repositoryV2.CreateDlAnswer(key, hashset))
                         {
                             await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
                             return;

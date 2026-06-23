@@ -6,15 +6,7 @@ namespace db_lib.Entities;
 
 public partial class QbchContext : DbContext
 {
-    public QbchContext(DbContextOptions<QbchContext> options)
-        : base(options)
-    {
-    }
-
-    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-    {
-        //optionsBuilder.UseNpgsql(_config.GetConnectionString("DataBase"));
-    }
+    public QbchContext(DbContextOptions<QbchContext> options) : base(options) { }
 
     public virtual DbSet<TdPermission> TdPermissions { get; set; }
 
