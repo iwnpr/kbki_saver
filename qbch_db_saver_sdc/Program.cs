@@ -20,15 +20,8 @@ using Xml_service_lib;
 
 ThreadPool.SetMinThreads(200, 200);
 
-var environment = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT");
-
 //Подключаем файл конфигурации
-IConfiguration configuration = new ConfigurationBuilder()
-    .SetBasePath(AppContext.BaseDirectory)
-    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
-    .AddJsonFile($"appsettings.{environment}.json", optional: true, reloadOnChange: false)
-    .AddEnvironmentVariables()
-    .Build();
+IConfiguration configuration = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
 
 var bootstrapServers = configuration.GetValue<string>("Kafka:BootstrapServers");
 var topic = configuration.GetSection("Kafka:Topic").Value;

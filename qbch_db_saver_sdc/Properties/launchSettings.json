@@ -1,10 +1,7 @@
 {
   "profiles": {
     "qbch_db_saver_sdc": {
-      "commandName": "Project",
-      "environmentVariables": {
-        "DOTNET_ENVIRONMENT": "PreProduction"
-      }
+      "commandName": "Project"
     }
   }
 }
