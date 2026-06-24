@@ -886,8 +886,8 @@ public partial class QbchV3Context : DbContext
             entity.ToTable("te_consent_purposes", "qbchv3");
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql("nextval('qbchv3.te_consent_purposes_key_id_seq'::regclass)")
-                .HasColumnName("key_id");
+                .HasDefaultValueSql("nextval('qbchv3.te_consent_purposes_id_seq'::regclass)")
+                .HasColumnName("id");
             entity.Property(e => e.PurposeId).HasColumnName("purpose_id");
             entity.Property(e => e.RequestId).HasColumnName("request_id");
 
@@ -904,8 +904,8 @@ public partial class QbchV3Context : DbContext
             entity.ToTable("te_request_purposes", "qbchv3");
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql("nextval('qbchv3.te_request_purposes_key_id_seq'::regclass)")
-                .HasColumnName("key_id");
+                .HasDefaultValueSql("nextval('qbchv3.te_request_purposes_id_seq'::regclass)")
+                .HasColumnName("id");
             entity.Property(e => e.PurposeId).HasColumnName("purpose_id");
             entity.Property(e => e.RequestId).HasColumnName("request_id");
 
@@ -917,8 +917,8 @@ public partial class QbchV3Context : DbContext
 
         modelBuilder.HasSequence("td_permissions_key_id_seq", "qbchv3").HasMax(2147483647L);
         modelBuilder.HasSequence("td_users_key_id_seq", "qbchv3");
-        modelBuilder.HasSequence("te_consent_purposes_key_id_seq", "qbchv3");
-        modelBuilder.HasSequence("te_request_purposes_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_consent_purposes_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_request_purposes_id_seq", "qbchv3");
         modelBuilder.HasSequence("te_cert_manage_key_id_seq", "qbchv3");
         modelBuilder.HasSequence("te_dlanswers_key_id_seq", "qbchv3");
         modelBuilder.HasSequence("te_dlputanswers_key_id_seq", "qbchv3");

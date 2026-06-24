@@ -442,7 +442,7 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
         var purposes = request.Согласие.Цель.Select(x => new TeConsentPurpose
         {
             Request = teRequest,
-            PurposeId = XmlEnumHelper.GetXmlEnumValue(x.КодЦели)
+            PurposeId = int.TryParse(XmlEnumHelper.GetXmlEnumValue(x.КодЦели), out var consentPurposeId) ? consentPurposeId : null
         });
 
         await _context.TeConsentPurposes.AddRangeAsync(purposes);
@@ -455,7 +455,7 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
         var purposes = request.Цель.Select(x => new TeRequestPurpose
         {
             Request = teRequest,
-            PurposeId = XmlEnumHelper.GetXmlEnumValue(x.КодЦели)
+            PurposeId = int.TryParse(XmlEnumHelper.GetXmlEnumValue(x.КодЦели), out var requestPurposeId) ? requestPurposeId : null
         });
 
         await _context.TeRequestPurposes.AddRangeAsync(purposes);
