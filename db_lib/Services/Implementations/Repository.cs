@@ -19,9 +19,9 @@ using Xml_service_lib;
 
 namespace db_lib.Services.Implementations
 {
-    public class Repository(QbchV3Context context, ICacheService cacheService, ILogger<Repository> logger, IXmlService xmlService, IBKIRequisitsHandler requisits) : IRepository
+    public class Repository(QbchContext context, ICacheService cacheService, ILogger<Repository> logger, IXmlService xmlService, IBKIRequisitsHandler requisits) : IRepository
     {
-        private readonly QbchV3Context _context = context;
+        private readonly QbchContext _context = context;
         private readonly ICacheService _cacheService = cacheService;
         private readonly ILogger<Repository> _logger = logger;
         private readonly IXmlService _xmlService = xmlService;
@@ -592,7 +592,7 @@ namespace db_lib.Services.Implementations
             // Провекра что хэш считан
             if (hashset is null)
             {
-                _logger.LogCritical("не удалось считать данные из Redis");
+                _logger.LogCritical("Не удалось считать данные из Redis: {hashset}", hashset);
                 return false;
             }
 
@@ -600,7 +600,7 @@ namespace db_lib.Services.Implementations
 
             if (ЗапросСведений is null)
             {
-                _logger.LogWarning($"не удалось считать данные блока {nameof(ЗапросСведений)}");
+                _logger.LogWarning($"Не удалось считать данные блока {nameof(ЗапросСведений)}");
             }
 
             var requestlist = ЗапросСведений?.Запрос.Select(x => x.ПорядковыйНомер);
@@ -668,7 +668,7 @@ namespace db_lib.Services.Implementations
             // Провекра что хэш считан
             if (hashset is null)
             {
-                _logger.LogCritical("не удалось считать данные из Redis");
+                _logger.LogCritical("Не удалось считать данные из Redis: {hashset}", hashset);
                 return false;
             }
 

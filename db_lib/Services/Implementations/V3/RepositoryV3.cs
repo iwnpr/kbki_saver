@@ -1,9 +1,12 @@
-﻿using db_lib.Entities;
+﻿using cache_lib.Interfaces;
+using db_lib.Entities;
 using db_lib.Models.DTO;
 using db_lib.Services.Interfaces.V3;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using QBCH.Lib.qcb_xml.v3_0;
+using QBCH_lib.CommonTypes.Api;
+using QBCHService_lib.Models.DTOs;
 using StackExchange.Redis;
 using System.Globalization;
 using System.Text.Json;
@@ -12,11 +15,14 @@ using Xml_service_lib;
 
 namespace db_lib.Services.Implementations.V3;
 
-public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, IXmlService xmlService) : IRepositoryV3
+public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXmlService xmlService, ICacheService cacheService, IBKIRequisitsHandler requisits) : IRepositoryV3
 {
-    private readonly QbchV3Context _context = context;
+    private readonly QbchContext _context = context;
     private readonly ILogger<RepositoryV3> _logger = logger;
     private readonly IXmlService _xmlService = xmlService;
+    private readonly ICacheService _cacheService = cacheService;
+    private readonly List<QBCHRequisite> _bureauList = requisits.GetBureaList();
+    private const string OurBureaName = "BKICI";
 
     private static DateTime? GetDateTimeValue(string? value, string pattern = "dd.MM.yyyy HH:mm:ss:ffff")
         => DateTime.TryParseExact(value, pattern, CultureInfo.InvariantCulture, DateTimeStyles.None, out var result) ? result : null;
@@ -37,8 +43,15 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
 
     private T? TryDeserialize<T>(string? value) where T : class
     {
-        try { return _xmlService.Deserialize<T>(value); }
-        catch (Exception ex) { _logger.LogDebug(ex, "V3 deserialize error"); }
+        try
+        {
+            return _xmlService.Deserialize<T>(value);
+        }
+        catch(Exception ex)
+        {
+            _logger.LogCritical(ex, "Ошибка десериализации блока {block} V3", nameof(T));
+        }
+
         return default;
     }
 
@@ -52,10 +65,25 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
             .FirstOrDefaultAsync();
     }
 
+    private async Task<TrAbonent?> GetAbonentByPSRN(string? psrn)
+    {
+        var upper = psrn?.ToUpper();
+        if (string.IsNullOrWhiteSpace(upper)) return null;
+        return await _context.TrAbonents.FirstOrDefaultAsync(x => x.Ogrn == upper);
+    }
+
     private async Task<bool> SaveAsync(string hashKey)
     {
-        try { await _context.SaveChangesAsync(); return true; }
-        catch (Exception ex) { _logger.LogCritical(ex, "Ошибка записи V3 в БД. Ключ {key}", hashKey); return false; }
+        try
+        {
+            await _context.SaveChangesAsync();
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex, "Ошибка записи в БД V3. Ключ {key}", hashKey);
+            return false;
+        }
     }
 
     private async Task<TdUser?> GetOrCreateUserV3(ЗапросСведенийЗапросИсточник источник, List<TdUser> users)
@@ -86,7 +114,7 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
                         Ogrn = юл.ОГРН,
                         UserType = 1,
                         IsForeign = false,
-                        UserTypeCodeId = userTypeCodeId
+                        //UserTypeCodeId = userTypeCodeId
                     };
                     users.Add(user);
                     return user;
@@ -143,7 +171,7 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
                         ShortName = иностранноеЮЛ.СокращенноеНаименование,
                         UserType = 1,
                         IsForeign = true,
-                        UserTypeCodeId = userTypeCodeId
+                        //UserTypeCodeId = userTypeCodeId
                     };
                     users.Add(user);
                     return user;
@@ -186,12 +214,15 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
     {
         if (hashset is null)
         {
-            _logger.LogCritical("Не удалось считать данные из Redis");
+            _logger.LogCritical("Не удалось считать данные из Redis: {hashset}", hashset);
             return false;
         }
-
         var requestXml = hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString();
         var request = TryDeserialize<ЗапросСведений>(requestXml);
+
+        if (request is null)
+            _logger.LogError("Не удалось считать данные блока {block}", nameof(ЗапросСведений));
+
         var errorCode = int.TryParse(hashset.FirstOrDefault(x => x.Name == "error_code").Value.ToString(), out var parsedError) ? parsedError : 0;
         var trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
 
@@ -200,6 +231,7 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
             ResponseGuid = hashset.FirstOrDefault(x => x.Name == "response_guid").Value.ToString()!,
             AbonentId = trAbonent?.KeyId,
             IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
+            RequestCertificateData = hashset.FirstOrDefault(x => x.Name == "request_certificate_data").Value,
             RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
             RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.UtcNow,
             RequestSignedData = hashset.FirstOrDefault(x => x.Name == "request_signed_data").Value,
@@ -220,7 +252,7 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
 
         await _context.TeDlrequests.AddAsync(dlrequest);
 
-        if (request?.Запрос is not null)
+        if (request is not null && (errorCode == 0 || errorCode == 12))
         {
             var packageErrorJson = hashset.FirstOrDefault(x => x.Name == "package_error").Value.ToString();
             var packageErrors = string.IsNullOrWhiteSpace(packageErrorJson)
@@ -229,7 +261,7 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
 
             List<TdUser> users = [];
 
-            foreach (var nested in request.Запрос)
+            foreach (var nested in request.Запрос ?? [])
             {
                 var orderNum = int.TryParse(nested.ПорядковыйНомер, out var parsedOrder) ? parsedOrder : 0;
                 var packageError = packageErrors?.FirstOrDefault(e => e.Id == orderNum);
@@ -246,16 +278,18 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
                     ErrorMessage = packageError?.error_message,
                     User = user?.KeyId == 0 ? user : null,
                     UserId = user?.KeyId == 0 ? null : user?.KeyId,
-                    ObligationAmount = nested.СуммаОбязательства?.Value,
-                    ObligationAmountCurrency = nested.СуммаОбязательства?.Валюта,
+                    //ObligationAmount = nested.СуммаОбязательства?.Value,
+                    //ObligationAmountCurrency = nested.СуммаОбязательства?.Валюта,
                     RequestXml = _xmlService.SerializeAsString(nested)?.Trim()
                 };
 
                 await _context.TeRequests.AddAsync(teRequest);
                 await AddSubject(nested, teRequest);
-                await AddConsentPurposes(nested, teRequest);
-                await AddRequestPurposes(nested, teRequest);
+                //await AddConsentPurposes(nested, teRequest);
+                //await AddRequestPurposes(nested, teRequest);
             }
+
+            await AddTeQBCHTasksV3(request, dlrequest, hashKey);
         }
 
         return await SaveAsync(hashKey);
@@ -265,7 +299,7 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
     {
         if (hashset is null)
         {
-            _logger.LogCritical("не удалось считать данные из Redis");
+            _logger.LogCritical("Не удалось считать данные из Redis: {hashset}", hashset);
             return false;
         }
 
@@ -282,6 +316,7 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
             RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.UtcNow,
             ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
             ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            RequestCertificateData = hashset.FirstOrDefault(x => x.Name == "request_certificate_data").Value,
             RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
             IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
             ResponseXml = responseXml,
@@ -299,12 +334,15 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
     {
         if (hashset is null)
         {
-            _logger.LogCritical("не удалось считать данные из Redis");
+            _logger.LogCritical("Не удалось считать данные из Redis: {hashset}", hashset);
             return false;
         }
-
         var requestXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "request_xml").Value);
         var request = TryDeserialize<ПредставлениеСведений>(requestXml);
+
+        if (request is null)
+            _logger.LogError("Не удалось считать данные блока {block}", nameof(ПредставлениеСведений));
+
         var trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
         var errorCode = int.TryParse(hashset.FirstOrDefault(x => x.Name == "error_code").Value.ToString(), out var parsedErrorCode)
             ? parsedErrorCode
@@ -357,10 +395,9 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
     {
         if (hashset is null)
         {
-            _logger.LogCritical("не удалось считать данные из Redis");
+            _logger.LogCritical("Не удалось считать данные из Redis: {hashset}", hashset);
             return false;
         }
-
         var responseXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "response_xml").Value);
         var trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
         var errorCode = int.TryParse(hashset.FirstOrDefault(x => x.Name == "error_code").Value.ToString(), out var parsedErrorCode)
@@ -435,29 +472,214 @@ public class RepositoryV3(QbchV3Context context, ILogger<RepositoryV3> logger, I
         }
     }
 
-    private async Task AddConsentPurposes(ЗапросСведенийЗапрос request, TeRequest teRequest)
+    private async Task AddTeQBCHTasksV3(ЗапросСведений request, TeDlrequest dlrequest, string redisKey)
     {
-        if (request.Согласие?.Цель is null) return;
+        var bureauList = request.ТипЗапроса == СправочникСпособыЗапроса.Item1
+            ? _bureauList.Where(x => x.Name == OurBureaName)
+            : _bureauList;
 
-        var purposes = request.Согласие.Цель.Select(x => new TeConsentPurpose
+        foreach (var bureau in bureauList)
         {
-            Request = teRequest,
-            PurposeId = int.TryParse(XmlEnumHelper.GetXmlEnumValue(x.КодЦели), out var consentPurposeId) ? consentPurposeId : null
-        });
+            var qbchKey = $"{redisKey}:{bureau.ogrn}";
+            var hashset = await _cacheService.TryGetHashAll(qbchKey);
 
-        await _context.TeConsentPurposes.AddRangeAsync(purposes);
+            if (hashset == null)
+            {
+                _logger.LogCritical("Ключ {Key} КБКИ {Name} пустой", qbchKey, bureau.Name);
+                continue;
+            }
+
+            var abonent = await GetAbonentByPSRN(bureau.ogrn);
+            if (abonent is null)
+            {
+                _logger.LogCritical("Абонент по ОГРН {Ogrn} не найден", bureau.ogrn);
+                continue;
+            }
+
+            var qbchTask = new TeQbchTask
+            {
+                QbchCorrespondentId = abonent.KeyId,
+                Req = dlrequest,
+                ResponseId = hashset.FirstOrDefault(x => x.Name == "response_id").Value,
+                TaskStartDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "task_start_date_time").Value.ToString()),
+                TaskEndDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "task_end_date_time").Value.ToString()),
+                TaskResultXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "task_result_xml").Value)
+            };
+
+            await _context.TeQbchTasks.AddAsync(qbchTask);
+            await AddTeQBCHDlRequestsV3(qbchTask, qbchKey);
+            await AddTeQBCHDlAnswersV3(qbchTask, qbchKey);
+            await AddTeResponsesV3(qbchTask, bureau.ogrn, dlrequest, request);
+        }
     }
 
-    private async Task AddRequestPurposes(ЗапросСведенийЗапрос request, TeRequest teRequest)
+    private async Task AddTeQBCHDlRequestsV3(TeQbchTask qbchTask, string redisKey)
     {
-        if (request.Цель is null) return;
+        var redis = _cacheService.GetDatabase();
+        var key = $"{redisKey}:dlrequest";
+        var length = await redis.ListLengthAsync(key);
 
-        var purposes = request.Цель.Select(x => new TeRequestPurpose
+        for (long i = length; i > 0; i--)
         {
-            Request = teRequest,
-            PurposeId = int.TryParse(XmlEnumHelper.GetXmlEnumValue(x.КодЦели), out var requestPurposeId) ? requestPurposeId : null
-        });
+            var cache = await redis.ListGetByIndexAsync(key, i - 1);
+            if (!cache.HasValue) continue;
 
-        await _context.TeRequestPurposes.AddRangeAsync(purposes);
+            using var ms = new MemoryStream(cache!);
+            var cachedValue = await JsonSerializer.DeserializeAsync<RedisMessageDTO>(ms);
+            await _context.TeQbchDlrequests.AddAsync(new TeQbchDlrequest
+            {
+                ErrorCode = GetIntValue(cachedValue?.ErrorCode),
+                ErrorMessage = cachedValue?.ErrorMessage,
+                QbchTask = qbchTask,
+                RequestData = cachedValue?.RequestData,
+                RequestXml = TryParseXmlBytesToString(cachedValue?.RequestXml),
+                HttpResponseCode = GetIntValue(cachedValue?.HttpResponseCode),
+                ResponseData = cachedValue?.ResponseData,
+                ResponseXml = TryParseXmlBytesToString(cachedValue?.ResponseXml),
+                RequestDateTime = GetDateTimeValue(cachedValue?.RequestDateTime),
+                ResponseDateTime = GetDateTimeValue(cachedValue?.ResponseDateTime)
+            });
+        }
     }
+
+    private async Task AddTeQBCHDlAnswersV3(TeQbchTask qbchTask, string redisKey)
+    {
+        var redis = _cacheService.GetDatabase();
+        var key = $"{redisKey}:dlanswer";
+        var length = await redis.ListLengthAsync(key);
+
+        for (long i = length; i > 0; i--)
+        {
+            var cache = await redis.ListGetByIndexAsync(key, i - 1);
+            if (!cache.HasValue) continue;
+
+            using var ms = new MemoryStream(cache);
+            var cachedValue = await JsonSerializer.DeserializeAsync<RedisMessageDTO>(ms);
+            await _context.TeQbchDlanswers.AddAsync(new TeQbchDlanswer
+            {
+                ErrorCode = GetIntValue(cachedValue?.ErrorCode),
+                ErrorMessage = cachedValue?.ErrorMessage,
+                QbchTask = qbchTask,
+                HttpResponseCode = GetIntValue(cachedValue?.HttpResponseCode),
+                ResponseData = cachedValue?.ResponseData,
+                ResponseXml = TryParseXmlBytesToString(cachedValue?.ResponseXml),
+                RequestDateTime = GetDateTimeValue(cachedValue?.RequestDateTime),
+                ResponseDateTime = GetDateTimeValue(cachedValue?.ResponseDateTime)
+            });
+        }
+    }
+
+    private async Task AddTeResponsesV3(TeQbchTask qbchTask, string psrn, TeDlrequest dlrequest, ЗапросСведений запрос)
+    {
+        if (dlrequest.QbchTasksResultXml is null) return;
+
+        var ответ = TryDeserialize<ОтветНаЗапросСведений>(dlrequest.QbchTasksResultXml);
+        if (ответ is null) return;
+
+        var ourBureauOgrn = _bureauList.FirstOrDefault(x => x.Name == OurBureaName)?.ogrn;
+
+        foreach (var item in запрос.Запрос ?? [])
+        {
+            var orderNum = int.TryParse(item.ПорядковыйНомер, out var o) ? o : 0;
+            var сведения = ответ.Сведения?.FirstOrDefault(x => x.ПорядковыйНомер == item.ПорядковыйНомер);
+
+            foreach (var кбки in сведения?.КБКИ?.Where(x => x.ОГРН == psrn) ?? [])
+            {
+                var teResponse = new TeResponse
+                {
+                    OrderNum = orderNum,
+                    ResponseXml = _xmlService.SerializeAsString(сведения)?.Trim(),
+                    QbchTask = qbchTask,
+                    AmpResponseType = запрос.КодСведений == СправочникВидыСведений.Item6
+                        ? null
+                        : MapAmpResponseTypeV3(кбки, ourBureauOgrn),
+                    SpResponseType = MapSpResponseTypeV3(кбки),
+                    ErrorCode = GetErrorCodeV3(кбки),
+                    ErrorMessage = GetErrorMessageV3(кбки)
+                };
+
+                await _context.TeResponses.AddAsync(teResponse);
+            }
+        }
+    }
+
+    private static int? MapAmpResponseTypeV3(ОтветНаЗапросСведенийСведенияКБКИ кбки, string? ourPSRN)
+    {
+        if (кбки.ItemsElementName is null) return null;
+
+        if (кбки.ItemsElementName.Contains(ItemsChoiceType.СубъектНеНайден)) return 1;
+
+        if (кбки.ItemsElementName.Contains(ItemsChoiceType.ОбязательствНет)) return 2;
+
+        if (кбки.ItemsElementName.Contains(ItemsChoiceType.Обязательства))
+        {
+            var обязательства = кбки.Items?.OfType<ОтветНаЗапросСведенийСведенияКБКИОбязательства>().FirstOrDefault();
+            var ourData = обязательства?.БКИ?.Any(x => x.ОГРН == ourPSRN) ?? false;
+            var notOurData = обязательства?.БКИ?.Any(x => x.ОГРН != ourPSRN) ?? false;
+
+            if (ourData && notOurData) return 4;
+            if (!ourData && notOurData) return 5;
+            if (ourData) return 3;
+            return 5;
+        }
+
+        if (кбки.ItemsElementName.Contains(ItemsChoiceType.Ошибка))
+        {
+            var ошибка = кбки.Items?.OfType<ТипОшибка>().FirstOrDefault();
+            return ошибка?.Код == "18" ? 7 : 6;
+        }
+
+        return null;
+    }
+
+    private static int? MapSpResponseTypeV3(ОтветНаЗапросСведенийСведенияКБКИ кбки)
+    {
+        if (кбки.ItemsElementName is null) return null;
+
+        if (кбки.ItemsElementName.Contains(ItemsChoiceType.СубъектНеНайден)) return 1;
+        if (кбки.ItemsElementName.Contains(ItemsChoiceType.СведенияОЗапретеНеПредоставляются)) return 2;
+        if (кбки.ItemsElementName.Contains(ItemsChoiceType.УсловияЗапрета)) return 3;
+        if (кбки.ItemsElementName.Contains(ItemsChoiceType.СведенийОЗапретеНет)) return 4;
+
+        return null;
+    }
+
+    private static int GetErrorCodeV3(ОтветНаЗапросСведенийСведенияКБКИ кбки)
+    {
+        var ошибка = кбки.Items?.OfType<ТипОшибка>().FirstOrDefault();
+        return int.TryParse(ошибка?.Код, out var code) ? code : 0;
+    }
+
+    private static string? GetErrorMessageV3(ОтветНаЗапросСведенийСведенияКБКИ кбки)
+        => кбки.Items?.OfType<ТипОшибка>().FirstOrDefault()?.Value;
+
+    private static int GetIntValue(string? value)
+        => int.TryParse(value, out var result) ? result : 0;
+
+    //TODO: до лучших времен. Для новой БД
+    //private async Task AddConsentPurposes(ЗапросСведенийЗапрос request, TeRequest teRequest)
+    //{
+    //    if (request.Согласие?.Цель is null) return;
+
+    //    var purposes = request.Согласие.Цель.Select(x => new TeConsentPurpose
+    //    {
+    //        Request = teRequest,
+    //        PurposeId = int.TryParse(XmlEnumHelper.GetXmlEnumValue(x.КодЦели), out var consentPurposeId) ? consentPurposeId : null
+    //    });
+
+    //    await _context.TeConsentPurposes.AddRangeAsync(purposes);
+    //}
+
+    //private async Task AddRequestPurposes(ЗапросСведенийЗапрос request, TeRequest teRequest)
+    //{
+    //    if (request.Цель is null) return;
+
+    //    var purposes = request.Цель.Select(x => new TeRequestPurpose
+    //    {
+    //        Request = teRequest,
+    //        PurposeId = int.TryParse(XmlEnumHelper.GetXmlEnumValue(x.КодЦели), out var requestPurposeId) ? requestPurposeId : null
+    //    });
+
+    //    await _context.TeRequestPurposes.AddRangeAsync(purposes);
+    //}
 }

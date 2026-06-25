@@ -161,6 +161,8 @@ namespace db_lib.Services.Implementations
         {
             var redisKey = key.Split(':');
             HashEntry[]? hashset = await _cacheService.TryGetHashAll(key);
+            if(hashset is null || hashset.Length == 0)
+                _logger.LogWarning("Не удалось найти ключ в кеше {key}", key);
 
             switch (redisKey[1])
             {
@@ -174,8 +176,6 @@ namespace db_lib.Services.Implementations
                         {
                             if (await _repositoryV3.CreateDlRequestV3(key, hashset))
                             {
-                                await ProduceRequestXmlIfExists(hashset, key);
-
                                 await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                                 return;
                             }
@@ -185,8 +185,6 @@ namespace db_lib.Services.Implementations
                         {
                             if (await _repositoryV2.CreateDlRequest(key, hashset))
                             {
-                                await ProduceRequestXmlIfExists(hashset, key);
-
                                 await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                                 return;
                             }
@@ -267,9 +265,6 @@ namespace db_lib.Services.Implementations
                                 {
                                     if (await _repositoryV3.CreateDlRequestV3(key, hashset))
                                     {
-
-                                        await ProduceRequestXmlIfExists(hashset, key);
-
                                         await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                                         return;
                                     }
@@ -278,8 +273,6 @@ namespace db_lib.Services.Implementations
 
                                 if (await _repositoryV2.CreateDlRequest(key, hashset))
                                 {
-                                    await ProduceRequestXmlIfExists(hashset, key);
-
                                     await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                                     return;
                                 }

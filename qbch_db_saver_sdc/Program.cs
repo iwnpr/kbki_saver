@@ -20,128 +20,141 @@ using Xml_service_lib;
 
 ThreadPool.SetMinThreads(200, 200);
 
-//Подключаем файл конфигурации
-IConfiguration configuration = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
-
-var bootstrapServers = configuration.GetValue<string>("Kafka:BootstrapServers");
-var topic = configuration.GetSection("Kafka:Topic").Value;
-var errorTopic = configuration.GetValue<string>("Kafka:ErrorTopic");
-var eventTopic = configuration.GetValue<string>("Kafka:EventTopic");
-var groupId = configuration.GetValue<string>("Kafka:GroupId");
-
-
-if (!bool.TryParse(Environment.GetEnvironmentVariable("ERROR_APP"), out bool isErrorApp))
-    isErrorApp = configuration.GetValue<bool?>("App:IsErrorApp") ?? true;
-
-Console.Title = isErrorApp ? $"IsError: {isErrorApp} | Topic: {errorTopic} | Event topic: {eventTopic}" : $"IsError: {isErrorApp} | Topic: {topic} | Event topic: {eventTopic}";
-
-// Конфигурация для подписчика
-var config = new ConsumerConfig
+if (!Environment.UserInteractive && OperatingSystem.IsWindows())
 {
-    BootstrapServers = bootstrapServers,
-    GroupId = groupId,
-    EnableAutoCommit = false,
-    SocketKeepaliveEnable = true,
-    AutoOffsetReset = AutoOffsetReset.Earliest,
-};
-
-// Создание продюсера для перезаписи id в Кафку
-IProducer<Null, string> producer = new ProducerBuilder<Null, string>(new ProducerConfig
-{
-    BootstrapServers = bootstrapServers,
-    LingerMs = 0,
-    RequestTimeoutMs = 10000,
-    Acks = Acks.All
-}).Build();
-
-ServiceCollection services = new();
-services.AddSingleton(configuration);
-services.AddDbContext<QbchV3Context>(o =>
-{
-    o.UseNpgsql(connectionString: configuration.GetConnectionString("DataBase"));
-    //o.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
-}, ServiceLifetime.Transient);
-services.AddTransient<ISaverService>(o => new SaverService(
-    o.GetRequiredService<ICacheService>(),
-    o.GetRequiredService<ILogger<SaverService>>(),
-    producer,
-    o.GetRequiredService<IRepository>(),
-    o.GetRequiredService<IRepositoryV3>(),
-    o.GetRequiredService<IConfiguration>(),
-    errorTopic));
-services.AddScoped<ICacheService, CacheService>();
-services.AddSingleton<IXmlService, XmlService>();
-services.AddTransient<IRepositoryV3, RepositoryV3>();
-services.AddTransient<IRepository, Repository>();
-services.AddSingleton<IBKIRequisitsHandler, BKIRequsits>();
-services.AddLogging(builder => builder.AddSerilog(new LoggerConfiguration().ReadFrom.Configuration(configuration).CreateLogger()));
-services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(configuration.GetConnectionString("Redis")!));
-
-IServiceProvider ServiceProvider = services.BuildServiceProvider();
-ILogger<Program> _logger = ServiceProvider.GetRequiredService<ILogger<Program>>();
-
-if (string.IsNullOrWhiteSpace(topic))
-{
-    _logger.LogError("Основной topic не заполнен.");
-    return;
+    ServiceBase[] ServicesToRun;
+    ServicesToRun = [new QBCHSaverBGService()];
+    ServiceBase.Run(ServicesToRun);
 }
-
-if (string.IsNullOrWhiteSpace(errorTopic))
+else
 {
-    _logger.LogError("Error topic не заполнен.");
-    return;
-}
-
-_logger.LogDebug("Event Topic установлен в значение {eventTopic}", eventTopic);
-_logger.LogDebug("Application started IsErrorApp:{_isErrorApp}", isErrorApp);
-
-if (!int.TryParse(Environment.GetEnvironmentVariable("PARALLEL"), out var ParallelConsumersCount))
-    ParallelConsumersCount = configuration.GetValue<int?>("App:ParallelConsumers") ?? 1;
-
-_logger.LogDebug("Кол-во подключений к кафке {numberOfPartitions}", ParallelConsumersCount);
-
-await Parallel.ForAsync(0, ParallelConsumersCount, async (i, ct) =>
-{
-    CreateConsumerAsync(ServiceProvider, new ConsumerBuilder<Ignore, string>(config).Build());
-});
-
-Task CreateConsumerAsync(IServiceProvider serviceProvider, IConsumer<Ignore, string> consumer)
-{
-    consumer.Subscribe(isErrorApp ? errorTopic : topic);
-    _logger.LogDebug("Subscribe to topic partition {_topic}", isErrorApp ? errorTopic : topic);
-    ConsumeResult<Ignore, string> cr;
-    bool Is500;
-    string key;
-
-    while (true)
+    if (Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") != "true")
     {
-        IServiceProvider scope = serviceProvider.CreateScope().ServiceProvider;
-        ISaverService _repository = scope.GetRequiredService<ISaverService>();
-        cr = consumer.Consume();
-        key = cr.Message.Value;
-        Is500 = key.Split(':')[0] != "QBCH";
+        // Отключаем в консоли возможность редактирования
+        DisableConsoleQuickEdit.Go();
+    }
 
-        try
+    //Подключаем файл конфигурации
+    IConfiguration configuration = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
+
+    var bootstrapServers = configuration.GetValue<string>("Kafka:BootstrapServers");
+    var topic = configuration.GetSection("Kafka:Topic").Value;
+    var errorTopic = configuration.GetValue<string>("Kafka:ErrorTopic");
+    var groupId = configuration.GetValue<string>("Kafka:GroupId");
+
+
+    if (!bool.TryParse(Environment.GetEnvironmentVariable("ERROR_APP"), out bool isErrorApp))
+        isErrorApp = configuration.GetValue<bool?>("App:IsErrorApp") ?? true;
+
+    Console.Title = isErrorApp ? $"IsError: {isErrorApp} | Topic: {errorTopic}" : $"IsError: {isErrorApp} | Topic: {topic}";
+
+    // Конфигурация для подписчика
+    var config = new ConsumerConfig
+    {
+        BootstrapServers = bootstrapServers,
+        GroupId = groupId,
+        EnableAutoCommit = false,
+        SocketKeepaliveEnable = true,
+        AutoOffsetReset = AutoOffsetReset.Earliest,
+    };
+
+    // Создание продюсера для перезаписи id в Кафку
+    IProducer<Null, string> producer = new ProducerBuilder<Null, string>(new ProducerConfig
+    {
+        BootstrapServers = bootstrapServers,
+        LingerMs = 0,
+        RequestTimeoutMs = 10000,
+        Acks = Acks.All
+    }).Build();
+
+    ServiceCollection services = new();
+    services.AddSingleton(configuration);
+    services.AddDbContext<QbchContext>(o =>
+    {
+        o.UseNpgsql(connectionString: configuration.GetConnectionString("DataBase"));
+        //o.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
+    }, ServiceLifetime.Transient);
+    services.AddTransient<ISaverService>(o => new SaverService(
+        o.GetRequiredService<ICacheService>(),
+        o.GetRequiredService<ILogger<SaverService>>(),
+        producer,
+        o.GetRequiredService<IRepository>(),
+        o.GetRequiredService<IRepositoryV3>(),
+        o.GetRequiredService<IConfiguration>(),
+        errorTopic));
+    services.AddScoped<ICacheService, CacheService>();
+    services.AddSingleton<IXmlService, XmlService>();
+    services.AddTransient<IRepositoryV3, RepositoryV3>();
+    services.AddTransient<IRepository, Repository>();
+    services.AddSingleton<IBKIRequisitsHandler, BKIRequsits>();
+    services.AddLogging(builder => builder.AddSerilog(new LoggerConfiguration().ReadFrom.Configuration(configuration).CreateLogger()));
+    services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(configuration.GetConnectionString("Redis")!));
+
+    IServiceProvider ServiceProvider = services.BuildServiceProvider();
+    ILogger<Program> _logger = ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    if (string.IsNullOrWhiteSpace(topic))
+    {
+        _logger.LogError("Основной topic не заполнен.");
+        return;
+    }
+
+    if (string.IsNullOrWhiteSpace(errorTopic))
+    {
+        _logger.LogError("Error topic не заполнен.");
+        return;
+    }
+
+    _logger.LogDebug("Application started IsErrorApp:{_isErrorApp}", isErrorApp);
+
+    if (!int.TryParse(Environment.GetEnvironmentVariable("PARALLEL"), out var ParallelConsumersCount))
+        ParallelConsumersCount = configuration.GetValue<int?>("App:ParallelConsumers") ?? 1;
+
+    _logger.LogDebug("Кол-во подключений к кафке {numberOfPartitions}", ParallelConsumersCount);
+
+    await Parallel.ForAsync(0, ParallelConsumersCount, async (i, ct) =>
+    {
+        CreateConsumerAsync(ServiceProvider, new ConsumerBuilder<Ignore, string>(config).Build());
+    });
+
+    Task CreateConsumerAsync(IServiceProvider serviceProvider, IConsumer<Ignore, string> consumer)
+    {
+        consumer.Subscribe(isErrorApp ? errorTopic : topic);
+        _logger.LogDebug("Subscribe to topic partition {_topic}", isErrorApp ? errorTopic : topic);
+        ConsumeResult<Ignore, string> cr;
+        bool Is500;
+        string key;
+
+        while (true)
         {
-            if (Is500)
-                _repository.SaveCriticalError(key).Wait();
+            IServiceProvider scope = serviceProvider.CreateScope().ServiceProvider;
+            ISaverService _repository = scope.GetRequiredService<ISaverService>();
+            cr = consumer.Consume();
+            key = cr.Message.Value;
+            Is500 = key.Split(':')[0] != "QBCH";
 
-            if (isErrorApp)
-                _repository.ErrorTopicHandler(key).Wait();
-            else
-                _repository.TopicHandler(key).Wait();
+            try
+            {
+                if (Is500)
+                    _repository.SaveCriticalError(key).Wait();
 
-            _logger.LogInformation("Обработан ключ {key}", key);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogCritical(ex, "Возникла ошибка записи в БД - {key}", key);
+                if (isErrorApp)
+                    _repository.ErrorTopicHandler(key).Wait();
+                else
+                    _repository.TopicHandler(key).Wait();
+
+                _logger.LogInformation("Обработан ключ {key}", key);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "Возникла ошибка записи в БД - {key}", key);
 
                 if (!isErrorApp)
-            producer.ProduceAsync(errorTopic, new() { Value = cr.Message.Value }).Wait();
-        }
+                    producer.ProduceAsync(errorTopic, new() { Value = cr.Message.Value }).Wait();
+            }
 
-        consumer.Commit(cr);
-        _logger.LogDebug("Partition: {prt} Offset: {offset} Message:{Message}", string.Join(',', consumer.Assignment), cr.Offset.Value.ToString(), cr.Message.Value);
+            consumer.Commit(cr);
+            _logger.LogDebug("Partition: {prt} Offset: {offset} Message:{Message}", string.Join(',', consumer.Assignment), cr.Offset.Value.ToString(), cr.Message.Value);
+        }
     }
 }

@@ -52,7 +52,7 @@ public partial class TdUser
 
     public string? DocIssuerCode { get; set; }
 
-    public string? UserTypeCodeId { get; set; }
+    //public string? UserTypeCodeId { get; set; }
 
     public virtual TrDocumentType? DocTypeNavigation { get; set; }
 
