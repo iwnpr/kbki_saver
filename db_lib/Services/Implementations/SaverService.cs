@@ -161,8 +161,14 @@ namespace db_lib.Services.Implementations
         {
             var redisKey = key.Split(':');
             HashEntry[]? hashset = await _cacheService.TryGetHashAll(key);
+
             if(hashset is null || hashset.Length == 0)
                 _logger.LogWarning("Не удалось найти ключ в кеше {key}", key);
+
+            if (hashset is not null)
+            {
+                _logger.LogDebug("Данные из Redis: {hashset}", string.Join("; ", hashset.Select(x => $"{x.Name}={x.Value}")));
+            }
 
             switch (redisKey[1])
             {
@@ -257,6 +263,8 @@ namespace db_lib.Services.Implementations
 
                         if (hashset is not null)
                         {
+                            _logger.LogDebug("Данные из Redis: {hashset}", string.Join("; ", hashset.Select(x => $"{x.Name}={x.Value}")));
+
                             var ErrorCode = (int)hashset.FirstOrDefault(x => x.Name == ErrorCodeField).Value;
 
                             if (!(ErrorCode == QbchErrorCodeWaitingResult && !hashset.Any(x => x.Name == QbchTasksEndDateTimeField)))
@@ -292,6 +300,9 @@ namespace db_lib.Services.Implementations
 
                     if (hashset is not null)
                     {
+
+                        _logger.LogDebug("Данные из Redis: {hashset}", string.Join("; ", hashset.Select(x => $"{x.Name}={x.Value}")));
+
                         if (IsV3(hashset))
                         {
                             if (await _repositoryV3.CreateDlAnswerV3(key, hashset))

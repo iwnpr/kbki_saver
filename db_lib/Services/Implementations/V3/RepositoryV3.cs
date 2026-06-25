@@ -49,7 +49,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         }
         catch(Exception ex)
         {
-            _logger.LogCritical(ex, "Ошибка десериализации блока {block} V3", nameof(T));
+            _logger.LogCritical(ex, "Ошибка десериализации блока {block} V3", typeof(T).Name);
         }
 
         return default;
@@ -77,7 +77,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         try
         {
             await _context.SaveChangesAsync();
-            return false;
+            return true;
         }
         catch (Exception ex)
         {
@@ -110,6 +110,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
                     {
                         FullName = юл.ПолноеНаименование,
                         ShortName = юл.СокращенноеНаименование,
+                        OtherName = юл.ИноеНаименование?.ToString(),
                         Inn = юл.ИНН,
                         Ogrn = юл.ОГРН,
                         UserType = 1,
@@ -143,6 +144,13 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
                         Inn = ип.ИННИП,
                         Ogrn = ип.ОГРНИП,
                         Snils = ип.СНИЛС,
+                        DocSeria = ип.ДокументЛичности?.Серия,
+                        DocNumber = ип.ДокументЛичности?.Номер,
+                        DocIssueDate = ип.ДокументЛичности?.ДатаВыдачи == null || ип.ДокументЛичности.ДатаВыдачи == default ? null : DateOnly.FromDateTime(ип.ДокументЛичности.ДатаВыдачи),
+                        DocIssuerName = ип.ДокументЛичности?.НаименованиеОргана,
+                        DocIssuerCode = ип.ДокументЛичности?.КодПодразделения,
+                        DocType = ип.ДокументЛичности is not null ? XmlEnumHelper.GetXmlEnumValue(ип.ДокументЛичности.КодДУЛ) : null,
+                        DocOtherName = ип.ДокументЛичности?.НаименованиеДУЛ,
                         UserType = 2,
                         IsForeign = false
                     };
@@ -169,6 +177,9 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
                     {
                         FullName = иностранноеЮЛ.ПолноеНаименование,
                         ShortName = иностранноеЮЛ.СокращенноеНаименование,
+                        OtherName = иностранноеЮЛ.ИноеНаименование,
+                        Inn = иностранноеЮЛ.НомерНП,
+                        Ogrn = иностранноеЮЛ.РегНомер,
                         UserType = 1,
                         IsForeign = true,
                         //UserTypeCodeId = userTypeCodeId
@@ -198,6 +209,15 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
                         LastName = иностранныйИП.ФИО?.Фамилия,
                         MiddleName = иностранныйИП.ФИО?.Отчество,
                         BirthDate = иностранныйИП.ДатаРождения == default ? null : DateOnly.FromDateTime(иностранныйИП.ДатаРождения),
+                        Inn = иностранныйИП.НомерНП,
+                        Ogrn = иностранныйИП.РегНомер,
+                        DocSeria = иностранныйИП.ДокументЛичности?.Серия,
+                        DocNumber = иностранныйИП.ДокументЛичности?.Номер,
+                        DocIssueDate = иностранныйИП.ДокументЛичности?.ДатаВыдачи == null || иностранныйИП.ДокументЛичности.ДатаВыдачи == default ? null : DateOnly.FromDateTime(иностранныйИП.ДокументЛичности.ДатаВыдачи),
+                        DocIssuerName = иностранныйИП.ДокументЛичности?.НаименованиеОргана,
+                        DocIssuerCode = иностранныйИП.ДокументЛичности?.КодПодразделения,
+                        DocType = иностранныйИП.ДокументЛичности is not null ? XmlEnumHelper.GetXmlEnumValue(иностранныйИП.ДокументЛичности.КодДУЛ) : null,
+                        DocOtherName = иностранныйИП.ДокументЛичности?.НаименованиеДУЛ,
                         FullName = name,
                         UserType = 5,
                         IsForeign = true
