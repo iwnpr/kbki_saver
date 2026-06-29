@@ -230,7 +230,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         }
     }
 
-    public async Task<bool> CreateDlRequestV3(string hashKey, HashEntry[]? hashset)
+    public async Task<bool> CreateDlRequestV3(string hashKey, HashEntry[]? hashset, bool checkAlreadySaved = false)
     {
         if (hashset is null)
         {
@@ -241,7 +241,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         var request = TryDeserialize<ЗапросСведений>(requestXml);
 
         if (request is null)
-            _logger.LogError("Не удалось считать данные блока {block}", nameof(ЗапросСведений));
+            _logger.LogError("Не удалось считать данные блока {block}, {key}", nameof(ЗапросСведений), hashKey);
 
         var errorCode = int.TryParse(hashset.FirstOrDefault(x => x.Name == "error_code").Value.ToString(), out var parsedError) ? parsedError : 0;
         var trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
@@ -253,7 +253,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
             IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
             RequestCertificateData = hashset.FirstOrDefault(x => x.Name == "request_certificate_data").Value,
             RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
-            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.Now,
             RequestSignedData = hashset.FirstOrDefault(x => x.Name == "request_signed_data").Value,
             RequestXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "request_xml").Value),
             ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
@@ -315,7 +315,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         return await SaveAsync(hashKey);
     }
 
-    public async Task<bool> CreateDlAnswerV3(string hashKey, HashEntry[]? hashset)
+    public async Task<bool> CreateDlAnswerV3(string hashKey, HashEntry[]? hashset, bool checkAlreadySaved = false)
     {
         if (hashset is null)
         {
@@ -333,9 +333,9 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         {
             ResponseGuid = hashset.FirstOrDefault(x => x.Name == "response_guid").Value.ToString(),
             TempGuid = hashset.FirstOrDefault(x => x.Name == "temp_guid").Value.ToString() ?? string.Empty,
-            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.Now,
             ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
-            ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()) ?? DateTime.Now,
             RequestCertificateData = hashset.FirstOrDefault(x => x.Name == "request_certificate_data").Value,
             RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
             IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
@@ -350,7 +350,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         return await SaveAsync(hashKey);
     }
 
-    public async Task<bool> CreateDlPutV3(string hashKey, HashEntry[]? hashset)
+    public async Task<bool> CreateDlPutV3(string hashKey, HashEntry[]? hashset, bool checkAlreadySaved = false)
     {
         if (hashset is null)
         {
@@ -393,7 +393,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
             AbonentId = trAbonent?.KeyId,
             IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
             RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
-            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.Now,
             ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
             ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()),
             RequestId = hashset.FirstOrDefault(x => x.Name == "request_id").Value.ToString(),
@@ -411,7 +411,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         return await SaveAsync(hashKey);
     }
 
-    public async Task<bool> CreateDlPutAnswerV3(string hashKey, HashEntry[]? hashset)
+    public async Task<bool> CreateDlPutAnswerV3(string hashKey, HashEntry[]? hashset, bool checkAlreadySaved = false)
     {
         if (hashset is null)
         {
@@ -428,9 +428,9 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         {
             TempGuid = hashset.FirstOrDefault(x => x.Name == "temp_guid").Value.ToString() ?? string.Empty,
             Guid = hashset.FirstOrDefault(x => x.Name == "response_guid").Value.ToString(),
-            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.Now,
             ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
-            ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()) ?? DateTime.UtcNow,
+            ResponseDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "response_date_time").Value.ToString()) ?? DateTime.Now,
             RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
             IpAddress = hashset.FirstOrDefault(x => x.Name == "ip_address").Value.ToString(),
             ResponseXml = responseXml,

@@ -55,48 +55,15 @@ namespace cache_lib.Implementations
             return _redisDb;
         }
 
-        /// <summary>
-        /// Установить значение в redis Hash
-        /// </summary>
-        /// <param name="pKey">Ключ</param>
-        /// <param name="pField">Поле</param>
-        /// <param name="pData">Данные</param>
-        /// <param name="dbIndex">id БД</param>
-        public void AddHash(string methodName, string pKey, string pField, string pStrData, int? dbIndex = null)
-        {
-            AddHash(methodName, pKey, pField, Encoding.UTF8.GetBytes(pStrData), dbIndex);
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="methodName"></param>
-        /// <param name="pKey"></param>
-        /// <param name="pField"></param>
-        /// <param name="pData"></param>
-        /// <param name="dbIndex"></param>
-        public void AddHash(string methodName, string pKey, string pField, byte[] pData, int? dbIndex = null)
+        public async Task AddHashAsync(string key, string field, string data)
         {
             try
             {
-                var key = KeyFormatter([methodName, pKey]);
-
-                if (dbIndex.HasValue)
-                {
-                    GetDatabase(dbIndex.Value);
-                    _additionDB.HashSet(key, [new(pField, pField == "SignedRequest" ? pData : Encoding.UTF8.GetString(pData))]);
-                }
-                else
-                {
-                    _redisDb.HashSet(key, [new(pField, pField == "SignedRequest" ? pData : Encoding.UTF8.GetString(pData))]);
-                }
-
-                _redisDb.KeyExpireAsync(key, TimeSpan.FromHours(_expirityHours));
-                _log.LogDebug("Добавлен хэш в Redis, ключ: {pGuid}", pKey);
+                await _redisDb.HashSetAsync(key, [new(field, data)]);
             }
             catch (Exception e)
             {
-                _log.LogCritical(e, "Ошибка добавления ключа в Redis");
+                _log.LogWarning(e, "Ошибка добавления ключа в Redis {key}, поле {field}", key, field);
                 throw;
             }
         }
@@ -105,11 +72,11 @@ namespace cache_lib.Implementations
         {
             try
             {                
-                foreach (var hash in hashset)
-                {
-                    if (hash.Name != "qbch_tasks_aggregate_xml")
-                        await _redisDb.HashDeleteAsync(key, hash.Name);
-                }
+                //foreach (var hash in hashset)
+                //{
+                //    if (hash.Name != "qbch_tasks_aggregate_xml")
+                //        await _redisDb.HashDeleteAsync(key, hash.Name);
+                //}
                 
                 await SetKeyExpirationInMinutes(key, _DlRequestExpirationMin);
 

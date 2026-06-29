@@ -9,7 +9,6 @@ using db_lib.Services.Interfaces.V3;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using qbch_db_saver_sdc;
 using QBCH_lib.CommonTypes.Api;
@@ -69,10 +68,15 @@ else
 
     ServiceCollection services = new();
     services.AddSingleton(configuration);
+    
     services.AddDbContext<QbchContext>(o =>
     {
         o.UseNpgsql(connectionString: configuration.GetConnectionString("DataBase"));
-        //o.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
+    }, ServiceLifetime.Transient);
+    
+    services.AddDbContext<QbchSecondaryContext>(o =>
+    {
+        o.UseNpgsql(connectionString: configuration.GetConnectionString("DataBaseSecondary"));
     }, ServiceLifetime.Transient);
     services.AddTransient<ISaverService>(o => new SaverService(
         o.GetRequiredService<ICacheService>(),
@@ -84,9 +88,33 @@ else
         errorTopic));
     services.AddScoped<ICacheService, CacheService>();
     services.AddSingleton<IXmlService, XmlService>();
-    services.AddTransient<IRepositoryV3, RepositoryV3>();
-    services.AddTransient<IRepository, Repository>();
-    services.AddSingleton<IBKIRequisitsHandler, BKIRequsits>();
+
+
+    services.AddTransient<RepositoryV3>();
+    services.AddTransient<IRepositoryV3>(sp => new DualRepositoryV3(
+        sp.GetRequiredService<RepositoryV3>(),
+        new RepositoryV3(
+            sp.GetRequiredService<QbchSecondaryContext>(),
+            sp.GetRequiredService<ILogger<RepositoryV3>>(),
+            sp.GetRequiredService<IXmlService>(),
+            sp.GetRequiredService<ICacheService>(),
+            sp.GetRequiredService<IBKIRequisitsHandler>()),
+        sp.GetRequiredService<ICacheService>(),
+        sp.GetRequiredService<ILogger<DualRepositoryV3>>()));
+
+    services.AddTransient<Repository>();
+    services.AddTransient<IRepository>(sp => new DualRepository(
+        sp.GetRequiredService<Repository>(),
+        new Repository(
+            sp.GetRequiredService<QbchSecondaryContext>(),
+            sp.GetRequiredService<ICacheService>(),
+            sp.GetRequiredService<ILogger<Repository>>(),
+            sp.GetRequiredService<IXmlService>(),
+            sp.GetRequiredService<IBKIRequisitsHandler>()),
+        sp.GetRequiredService<ICacheService>(),
+        sp.GetRequiredService<ILogger<DualRepository>>()));
+
+    services.AddTransient<IBKIRequisitsHandler, BKIRequsits>();
     services.AddLogging(builder => builder.AddSerilog(new LoggerConfiguration().ReadFrom.Configuration(configuration).CreateLogger()));
     services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(configuration.GetConnectionString("Redis")!));
 

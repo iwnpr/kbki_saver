@@ -7,26 +7,8 @@ namespace cache_lib.Interfaces
     public interface ICacheService
     {
         public IDatabase GetDatabase();
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="methodName"></param>
-        /// <param name="pKey"></param>
-        /// <param name="pField"></param>
-        /// <param name="pData"></param>
-        /// <param name="dbIndex"></param>
-        void AddHash(string methodName, string pKey, string pField, byte[] pData, int? dbIndex = null);
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="methodName"></param>
-        /// <param name="pKey"></param>
-        /// <param name="pField"></param>
-        /// <param name="pData"></param>
-        /// <param name="dbIndex"></param>
-        void AddHash(string methodName, string pKey, string pField, string pData, int? dbIndex = null);
+        
+        Task AddHashAsync(string key, string field, string data);
 
         /// <summary>
         /// 
@@ -119,7 +101,7 @@ namespace cache_lib.Interfaces
         Task<string?> GetStringHashValueAsync(string hashKey, string fieldKey);
 
         /// <summary>
-        /// 
+        ///
         /// </summary>
         /// <param name="key"></param>
         /// <returns></returns>

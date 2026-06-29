@@ -36,6 +36,7 @@ namespace db_lib.Services.Implementations
         private readonly int _DlPutExpirationMin = config.GetValue<int>("RedisCache:DlPutExpirationMin");
         private readonly int _DlPutAnswerExpirationMin = config.GetValue<int>("RedisCache:DlPutAnswerExpirationMin");
         private readonly string? _eventTopic = config.GetValue<string>("Kafka:EventTopic");
+        private readonly string? _dlqTopic = config.GetValue<string>("Kafka:DlqTopic");
 
         /// <summary>
         /// Имя поля Redis-хэша с версией API
@@ -153,6 +154,29 @@ namespace db_lib.Services.Implementations
         }
 
         /// <summary>
+        /// Проверяем условия возможноси записи в БД
+        /// </summary>
+        /// <param name="hashset">Хэш из Redis с данными запроса</param>
+        /// <returns>true, если условия записи в БД выполняются, иначе - false</returns>
+        private static bool IsReadyToSave(HashEntry[] hashset)
+        {
+            bool hasEndDateTime = hashset.Any(x => x.Name == QbchTasksEndDateTimeField);
+            bool hasErrorCode = hashset.Any(x => x.Name == ErrorCodeField);
+
+            if (!hasEndDateTime && !hasErrorCode)
+                return false;
+
+            if (hasErrorCode && !hasEndDateTime)
+            {
+                var errorCode = (int)hashset.First(x => x.Name == ErrorCodeField).Value;
+                if (errorCode == QbchErrorCodeWaitingResult)
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// Обработка 
         /// </summary>
         /// <param name="key"></param>
@@ -162,40 +186,32 @@ namespace db_lib.Services.Implementations
             var redisKey = key.Split(':');
             HashEntry[]? hashset = await _cacheService.TryGetHashAll(key);
 
-            if(hashset is null || hashset.Length == 0)
+            if (hashset is null || hashset.Length == 0)
                 _logger.LogWarning("Не удалось найти ключ в кеше {key}", key);
-
-            if (hashset is not null)
-            {
-                _logger.LogDebug("Данные из Redis: {hashset}", string.Join("; ", hashset.Select(x => $"{x.Name}={x.Value}")));
-            }
+            else
+                _logger.LogDebug("Данные из Redis: {hashset}, {key}", string.Join("; ", hashset.Select(x => $"{x.Name}={x.Value}")), key);
 
             switch (redisKey[1])
             {
                 case RequestTypeDlRequest:
 
-                    var ErrorCode = (int)hashset.FirstOrDefault(x => x.Name == ErrorCodeField).Value;
+                    if (!IsReadyToSave(hashset))
+                        break;
 
-                    if (!(ErrorCode == QbchErrorCodeWaitingResult && !hashset.Any(x => x.Name == QbchTasksEndDateTimeField)))
+                    if (IsV3(hashset))
                     {
-                        if (IsV3(hashset))
+                        if (await _repositoryV3.CreateDlRequestV3(key, hashset))
                         {
-                            if (await _repositoryV3.CreateDlRequestV3(key, hashset))
-                            {
-                                await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
-                                return;
-                            }
-                            break;
+                            await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
+                            return;
                         }
-                        else
-                        {
-                            if (await _repositoryV2.CreateDlRequest(key, hashset))
-                            {
-                                await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
-                                return;
-                            }
-                            break;
-                        }
+                        break;
+                    }
+
+                    if (await _repositoryV2.CreateDlRequest(key, hashset))
+                    {
+                        await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
+                        return;
                     }
                     break;
 
@@ -261,17 +277,22 @@ namespace db_lib.Services.Implementations
                     {
                         hashset = await _cacheService.TryGetHashAll(key);
 
+                        if (hashset is null || hashset.Length == 0)
+                        {
+                            _logger.LogWarning("Не удалось найти ключ в кеше {key}", key);
+                            await SendToDlqAsync(key);
+                            return;
+                        }
+
                         if (hashset is not null)
                         {
-                            _logger.LogDebug("Данные из Redis: {hashset}", string.Join("; ", hashset.Select(x => $"{x.Name}={x.Value}")));
+                            _logger.LogDebug("Данные из Redis: {hashset}, {key}", string.Join("; ", hashset.Select(x => $"{x.Name}={x.Value}")), key);
 
-                            var ErrorCode = (int)hashset.FirstOrDefault(x => x.Name == ErrorCodeField).Value;
-
-                            if (!(ErrorCode == QbchErrorCodeWaitingResult && !hashset.Any(x => x.Name == QbchTasksEndDateTimeField)))
+                            if (IsReadyToSave(hashset))
                             {
                                 if (IsV3(hashset))
                                 {
-                                    if (await _repositoryV3.CreateDlRequestV3(key, hashset))
+                                    if (await _repositoryV3.CreateDlRequestV3(key, hashset, checkAlreadySaved: true))
                                     {
                                         await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                                         return;
@@ -279,7 +300,7 @@ namespace db_lib.Services.Implementations
                                     break;
                                 }
 
-                                if (await _repositoryV2.CreateDlRequest(key, hashset))
+                                if (await _repositoryV2.CreateDlRequest(key, hashset, checkAlreadySaved: true))
                                 {
                                     await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                                     return;
@@ -291,28 +312,37 @@ namespace db_lib.Services.Implementations
 
                         await Task.Delay(ErrorTopicHandlerRetryDelayMilliseconds);
                     }
-                    while (!IsCancelled || !cts.IsCancellationRequested);
+
+                    // завершаем при появлении cancellation_flag, либо по таймауту
+                    while (!IsCancelled && !cts.IsCancellationRequested);
 
                     break;
 
                 case RequestTypeDlAnswer:
                     hashset = await _cacheService.TryGetHashAll(key);
 
+                    if (hashset is null || hashset.Length == 0)
+                    {
+                        _logger.LogWarning("Не удалось найти ключ в кеше {key}", key);
+                        await SendToDlqAsync(key);
+                        return;
+                    }
+
                     if (hashset is not null)
                     {
 
-                        _logger.LogDebug("Данные из Redis: {hashset}", string.Join("; ", hashset.Select(x => $"{x.Name}={x.Value}")));
+                        _logger.LogDebug("Данные из Redis: {hashset}, {key}", string.Join("; ", hashset.Select(x => $"{x.Name}={x.Value}")), key);
 
                         if (IsV3(hashset))
                         {
-                            if (await _repositoryV3.CreateDlAnswerV3(key, hashset))
+                            if (await _repositoryV3.CreateDlAnswerV3(key, hashset, checkAlreadySaved: true))
                             {
                                 await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
                                 return;
                             }
                         }
 
-                        if (await _repositoryV2.CreateDlAnswer(key, hashset))
+                        if (await _repositoryV2.CreateDlAnswer(key, hashset, checkAlreadySaved: true))
                         {
                             await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
                             return;
@@ -328,7 +358,7 @@ namespace db_lib.Services.Implementations
                         _logger.LogError("Redis hash не найден для ключа {key}", key);
                         break;
                     }
-                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutV3(key, hashset))
+                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutV3(key, hashset, checkAlreadySaved: true))
                     {
                         await _cacheService.SetKeyExpirationInMinutes(key, _DlPutExpirationMin);
                         return;
@@ -342,7 +372,7 @@ namespace db_lib.Services.Implementations
                         _logger.LogError("Redis hash не найден для ключа {key}", key);
                         break;
                     }
-                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutAnswerV3(key, hashset))
+                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutAnswerV3(key, hashset, checkAlreadySaved: true))
                     {
                         await _cacheService.SetKeyExpirationInMinutes(key, _DlPutAnswerExpirationMin);
                         return;
@@ -353,7 +383,35 @@ namespace db_lib.Services.Implementations
                     break;
             }
 
-            _logger.LogCritical("Lost QBCH key: {key}", key);
+            await SendToDlqAsync(key);
+        }
+
+        /// <summary>
+        /// Отправка необработанного ключа в DLQ-топик (тупиковая очередь для дальнейшего ручного разбора).
+        /// Имя топика берётся из конфига Kafka:DlqTopic. Если топик не задан — фиксируется только потеря в логе.
+        /// </summary>
+        /// <param name="key">Ключ Redis, который не удалось обработать</param>
+        private async Task SendToDlqAsync(string key)
+        {
+            if (string.IsNullOrWhiteSpace(_dlqTopic))
+            {
+                _logger.LogCritical("DLQ-топик не настроен — Kafka:DlqTopic", key);
+                return;
+            }
+
+            try
+            {
+                var result = await _producer.ProduceAsync(_dlqTopic, new() { Value = key });
+
+                if (result.Status == PersistenceStatus.NotPersisted)
+                    _logger.LogCritical("Lost QBCH key: {key} — не удалось доставить в DLQ {dlq}", key, _dlqTopic);
+                else
+                    _logger.LogCritical("Lost QBCH key: {key} — отправлен в DLQ {dlq}", key, _dlqTopic);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "Ошибка при обработки DQL", key, _dlqTopic);
+            }
         }
 
         /// <summary>
