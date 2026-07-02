@@ -10,7 +10,7 @@ namespace QBCH.Lib.qcb_xml.v3_0
     [System.ComponentModel.DesignerCategoryAttribute("code")]
     [System.Xml.Serialization.XmlTypeAttribute(AnonymousType=true)]
     [System.Xml.Serialization.XmlRoot(ElementName = "Запрос")]
-    public partial class ЗапросСведенийЗапрос {
+    public partial class Запрос {
         
         private ЗапросСведенийЗапросИсточник источникField;
         

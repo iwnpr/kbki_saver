@@ -14,7 +14,7 @@ namespace QBCH.Lib.qcb_xml.v3_0
         
         private ЗапросСведенийАбонент абонентField;
         
-        private ЗапросСведенийЗапрос[] запросField;
+        private Запрос[] запросField;
         
         private string версияField;
         
@@ -44,7 +44,7 @@ namespace QBCH.Lib.qcb_xml.v3_0
         
         /// <remarks/>
         [System.Xml.Serialization.XmlElementAttribute("Запрос")]
-        public ЗапросСведенийЗапрос[] Запрос {
+        public Запрос[] Запрос {
             get {
                 return this.запросField;
             }

@@ -444,7 +444,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         return await SaveAsync(hashKey);
     }
 
-    private async Task AddSubject(ЗапросСведенийЗапрос request, TeRequest teRequest)
+    private async Task AddSubject(Запрос request, TeRequest teRequest)
     {
         if (request.Субъект is null)
             return;
