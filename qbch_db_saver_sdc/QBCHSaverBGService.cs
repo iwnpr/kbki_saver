@@ -63,10 +63,6 @@ namespace qbch_db_saver_sdc
                 o.UseNpgsql(configuration.GetConnectionString("DataBase"));
                 //o.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
             }, ServiceLifetime.Transient);
-            // Вторая схема для дублирующей записи — та же БД (DataBase), другое имя схемы (Database:SchemaSecondary)
-            services.AddDbContext<QbchSecondaryContext>(o => {
-                o.UseNpgsql(configuration.GetConnectionString("DataBaseSecondary"));
-            }, ServiceLifetime.Transient);
             services.AddTransient<ISaverService>(o => new SaverService(
                 o.GetRequiredService<ICacheService>(),
                 o.GetRequiredService<ILogger<SaverService>>(),
@@ -78,32 +74,8 @@ namespace qbch_db_saver_sdc
             services.AddSingleton<ICacheService, CacheService>();
             services.AddSingleton<IXmlService, XmlService>();
 
-            // Репозитории дублируют запись в две БД через декораторы Dual*.
-            // primary — конкретный тип, DI сам подставит QbchContext (основная БД).
-            // secondary собираем фабрикой, чтобы подсунуть QbchSecondaryContext (вторая БД).
-            services.AddTransient<RepositoryV3>();
-            services.AddTransient<IRepositoryV3>(sp => new DualRepositoryV3(
-                sp.GetRequiredService<RepositoryV3>(),
-                new RepositoryV3(
-                    sp.GetRequiredService<QbchSecondaryContext>(),
-                    sp.GetRequiredService<ILogger<RepositoryV3>>(),
-                    sp.GetRequiredService<IXmlService>(),
-                    sp.GetRequiredService<ICacheService>(),
-                    sp.GetRequiredService<IBKIRequisitsHandler>()),
-                sp.GetRequiredService<ICacheService>(),
-                sp.GetRequiredService<ILogger<DualRepositoryV3>>()));
-
-            services.AddTransient<Repository>();
-            services.AddTransient<IRepository>(sp => new DualRepository(
-                sp.GetRequiredService<Repository>(),
-                new Repository(
-                    sp.GetRequiredService<QbchSecondaryContext>(),
-                    sp.GetRequiredService<ICacheService>(),
-                    sp.GetRequiredService<ILogger<Repository>>(),
-                    sp.GetRequiredService<IXmlService>(),
-                    sp.GetRequiredService<IBKIRequisitsHandler>()),
-                sp.GetRequiredService<ICacheService>(),
-                sp.GetRequiredService<ILogger<DualRepository>>()));
+            services.AddTransient<IRepositoryV3, RepositoryV3>();
+            services.AddTransient<IRepository, Repository>();
 
             services.AddSingleton<IBKIRequisitsHandler, BKIRequsits>();
             services.AddLogging(builder => builder.AddSerilog(new LoggerConfiguration().ReadFrom.Configuration(configuration).CreateLogger()));

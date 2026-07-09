@@ -73,11 +73,7 @@ else
     {
         o.UseNpgsql(connectionString: configuration.GetConnectionString("DataBase"));
     }, ServiceLifetime.Transient);
-    
-    services.AddDbContext<QbchSecondaryContext>(o =>
-    {
-        o.UseNpgsql(connectionString: configuration.GetConnectionString("DataBaseSecondary"));
-    }, ServiceLifetime.Transient);
+
     services.AddTransient<ISaverService>(o => new SaverService(
         o.GetRequiredService<ICacheService>(),
         o.GetRequiredService<ILogger<SaverService>>(),
@@ -89,30 +85,8 @@ else
     services.AddScoped<ICacheService, CacheService>();
     services.AddSingleton<IXmlService, XmlService>();
 
-
-    services.AddTransient<RepositoryV3>();
-    services.AddTransient<IRepositoryV3>(sp => new DualRepositoryV3(
-        sp.GetRequiredService<RepositoryV3>(),
-        new RepositoryV3(
-            sp.GetRequiredService<QbchSecondaryContext>(),
-            sp.GetRequiredService<ILogger<RepositoryV3>>(),
-            sp.GetRequiredService<IXmlService>(),
-            sp.GetRequiredService<ICacheService>(),
-            sp.GetRequiredService<IBKIRequisitsHandler>()),
-        sp.GetRequiredService<ICacheService>(),
-        sp.GetRequiredService<ILogger<DualRepositoryV3>>()));
-
-    services.AddTransient<Repository>();
-    services.AddTransient<IRepository>(sp => new DualRepository(
-        sp.GetRequiredService<Repository>(),
-        new Repository(
-            sp.GetRequiredService<QbchSecondaryContext>(),
-            sp.GetRequiredService<ICacheService>(),
-            sp.GetRequiredService<ILogger<Repository>>(),
-            sp.GetRequiredService<IXmlService>(),
-            sp.GetRequiredService<IBKIRequisitsHandler>()),
-        sp.GetRequiredService<ICacheService>(),
-        sp.GetRequiredService<ILogger<DualRepository>>()));
+    services.AddTransient<IRepositoryV3, RepositoryV3>();
+    services.AddTransient<IRepository, Repository>();
 
     services.AddTransient<IBKIRequisitsHandler, BKIRequsits>();
     services.AddLogging(builder => builder.AddSerilog(new LoggerConfiguration().ReadFrom.Configuration(configuration).CreateLogger()));

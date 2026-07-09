@@ -1,23 +1,18 @@
-﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
+﻿using System;
+using System.Collections.Generic;
+using Microsoft.EntityFrameworkCore;
 
 namespace db_lib.Entities;
 
 public partial class QbchContext : DbContext
 {
-
-    private readonly string _schema;
-
-    public QbchContext(DbContextOptions<QbchContext> options, IConfiguration configuration) : base(options)
+    public QbchContext()
     {
-        _schema = configuration.GetValue<string>("Database:Schema");
     }
 
-    public QbchContext(DbContextOptions<QbchContext> options) : base(options) { }
-    
-    protected QbchContext(DbContextOptions options, string? schema) : base(options)
+    public QbchContext(DbContextOptions<QbchContext> options)
+        : base(options)
     {
-        _schema = schema;
     }
 
     public virtual DbSet<TdPermission> TdPermissions { get; set; }
@@ -40,7 +35,11 @@ public partial class QbchContext : DbContext
 
     public virtual DbSet<TeQbchTask> TeQbchTasks { get; set; }
 
+    public virtual DbSet<TeConsentPurpose> TeConsentPurposes { get; set; }
+
     public virtual DbSet<TeRequest> TeRequests { get; set; }
+
+    public virtual DbSet<TeRequestPurpose> TeRequestPurposes { get; set; }
 
     public virtual DbSet<TeResponse> TeResponses { get; set; }
 
@@ -72,19 +71,20 @@ public partial class QbchContext : DbContext
 
     public virtual DbSet<TrUserType> TrUserTypes { get; set; }
 
+    public virtual DbSet<TrUserTypeCode> TrUserTypeCodes { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.HasDefaultSchema(_schema);
+        modelBuilder.HasDefaultSchema("qbchv3");
 
         modelBuilder.Entity<TdPermission>(entity =>
         {
             entity.HasKey(e => e.KeyId).HasName("td_permission_pkey");
 
-            entity.ToTable("td_permissions", _schema, tb => tb.HasComment("Права доступа к запросам КБКИ"));
+            entity.ToTable("td_permissions", "qbchv3", tb => tb.HasComment("Права доступа к запросам КБКИ"));
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.td_permissions_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.td_permissions_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.AbonentId).HasColumnName("abonent_id");
             entity.Property(e => e.Inserted)
@@ -111,10 +111,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("td_users_pk");
 
-            entity.ToTable("td_users", _schema, tb => tb.HasComment("Список пользователей - контрагентов. Здесь присутствуют как контрагенты КБКИ так и внешние, которые пришли к нам с запросом."));
+            entity.ToTable("td_users", "qbchv3", tb => tb.HasComment("Список пользователей - контрагентов. Здесь присутствуют как контрагенты КБКИ так и внешние, которые пришли к нам с запросом."));
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.td_users_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.td_users_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.BirthDate).HasColumnName("birth_date");
             entity.Property(e => e.BirthPlace).HasColumnName("birth_place");
@@ -140,6 +140,7 @@ public partial class QbchContext : DbContext
             entity.Property(e => e.ShortName).HasColumnName("short_name");
             entity.Property(e => e.Snils).HasColumnName("snils");
             entity.Property(e => e.UserType).HasColumnName("user_type");
+            //entity.Property(e => e.UserTypeCodeId).HasColumnName("user_type_code_id");
 
             entity.HasOne(d => d.DocTypeNavigation).WithMany(p => p.TdUsers)
                 .HasForeignKey(d => d.DocType)
@@ -155,10 +156,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_cert_manage_pk");
 
-            entity.ToTable("te_cert_manage", _schema, tb => tb.HasComment("Таблица используется для запросов cert_add и cert_revoke"));
+            entity.ToTable("te_cert_manage", "qbchv3", tb => tb.HasComment("Таблица используется для запросов cert_add и cert_revoke"));
 
             entity.Property(e => e.KeyId)
-                 .HasDefaultValueSql($"nextval('{_schema}.te_cert_manage_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.te_cert_manage_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.AbonentId).HasColumnName("abonent_id");
             entity.Property(e => e.CertData).HasColumnName("cert_data");
@@ -204,10 +205,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_dlanswers_pk");
 
-            entity.ToTable("te_dlanswers", _schema, tb => tb.HasComment("Таблица со всеми запросами dlanswer, которые пришли к нам."));
+            entity.ToTable("te_dlanswers", "qbchv3", tb => tb.HasComment("Таблица со всеми запросами dlanswer, которые пришли к нам."));
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.te_dlanswers_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.te_dlanswers_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.AbonentId).HasColumnName("abonent_id");
             entity.Property(e => e.ErrorCode)
@@ -251,10 +252,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_dlrequests_pk_1");
 
-            entity.ToTable("te_dlputs", _schema);
+            entity.ToTable("te_dlputs", "qbchv3");
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.te_dlputs_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.te_dlputs_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.AbonentId).HasColumnName("abonent_id");
             entity.Property(e => e.AddCommandsCount).HasColumnName("add_commands_count");
@@ -298,10 +299,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_dlputanswers_pk");
 
-            entity.ToTable("te_dlputanswers", _schema, tb => tb.HasComment("Таблица со всеми запросами dlputanswer которые пришли к нам"));
+            entity.ToTable("te_dlputanswers", "qbchv3", tb => tb.HasComment("Таблица со всеми запросами dlputanswer которые пришли к нам"));
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.te_dlputanswers_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.te_dlputanswers_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.AbonentId).HasColumnName("abonent_id");
             entity.Property(e => e.ErrorCode)
@@ -339,10 +340,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_dlrequests_pk");
 
-            entity.ToTable("te_dlrequests", _schema, tb => tb.HasComment("Запросы dlrequest которые поступили к нам. Здесь есть как запросы от других КБКИ так и от наших контрагентов.\r\nКод ответа 12 не отдается клиенту - является информационным."));
+            entity.ToTable("te_dlrequests", "qbchv3", tb => tb.HasComment("Запросы dlrequest которые поступили к нам. Здесь есть как запросы от других КБКИ так и от наших контрагентов.\r\nКод ответа 12 не отдается клиенту - является информационным."));
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.te_dlrequests_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.te_dlrequests_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.AbonentId).HasColumnName("abonent_id");
             entity.Property(e => e.ErrorCode)
@@ -429,7 +430,7 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_qbch_dlanswers_pk");
 
-            entity.ToTable("te_qbch_dlanswers", _schema);
+            entity.ToTable("te_qbch_dlanswers", "qbchv3");
 
             entity.Property(e => e.KeyId).HasColumnName("key_id");
             entity.Property(e => e.ErrorCode)
@@ -467,10 +468,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_qbch_dlrequests_pk");
 
-            entity.ToTable("te_qbch_dlrequests", _schema);
+            entity.ToTable("te_qbch_dlrequests", "qbchv3");
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.te_qbch_dlrequests_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.te_qbch_dlrequests_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.ErrorCode)
                 .HasDefaultValue(0)
@@ -511,7 +512,7 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_qbch_tasks_pk");
 
-            entity.ToTable("te_qbch_tasks", _schema, tb => tb.HasComment("Задача в рамках которой отправляются запросы во внешние КБКИ. (Сбор данных из нашей БД так же приравнивается к внешней КБКИ)"));
+            entity.ToTable("te_qbch_tasks", "qbchv3", tb => tb.HasComment("Задача в рамках которой отправляются запросы во внешние КБКИ. (Сбор данных из нашей БД так же приравнивается к внешней КБКИ)"));
 
             entity.Property(e => e.KeyId).HasColumnName("key_id");
             entity.Property(e => e.Inserted)
@@ -546,10 +547,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_qbch_requests_pk");
 
-            entity.ToTable("te_requests", _schema, tb => tb.HasComment("Запросы поступившие в dlrequest будут разложены по одному в данную таблицу, вне зависимости от типа запроса (пакетный/одиночный)."));
+            entity.ToTable("te_requests", "qbchv3", tb => tb.HasComment("Запросы поступившие в dlrequest будут разложены по одному в данную таблицу, вне зависимости от типа запроса (пакетный/одиночный)."));
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.te_requests_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.te_requests_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.DlrequestId).HasColumnName("dlrequest_id");
             entity.Property(e => e.ErrorCode)
@@ -560,6 +561,8 @@ public partial class QbchContext : DbContext
                 .HasDefaultValueSql("now()")
                 .HasColumnType("timestamp without time zone")
                 .HasColumnName("inserted");
+            //entity.Property(e => e.ObligationAmount).HasColumnName("obligation_amount");
+            //entity.Property(e => e.ObligationAmountCurrency).HasColumnName("obligation_amount_currency");
             entity.Property(e => e.OrderNum).HasColumnName("order_num");
             entity.Property(e => e.RequestXml)
                 .HasColumnType("xml")
@@ -585,10 +588,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_responses_pk");
 
-            entity.ToTable("te_responses", _schema, tb => tb.HasComment("Ответы собранные в qbch_tasks будут разложены в данную таблицу вне зависимости от типа - пакетный запрос или одиночный."));
+            entity.ToTable("te_responses", "qbchv3", tb => tb.HasComment("Ответы собранные в qbch_tasks будут разложены в данную таблицу вне зависимости от типа - пакетный запрос или одиночный."));
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.te_responses_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.te_responses_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.AmpResponseType).HasColumnName("amp_response_type");
             entity.Property(e => e.ErrorCode)
@@ -624,10 +627,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_subjects_pkey");
 
-            entity.ToTable("te_subjects", _schema, tb => tb.HasComment("Субъект в запросе"));
+            entity.ToTable("te_subjects", "qbchv3", tb => tb.HasComment("Субъект в запросе"));
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.te_subjects_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.te_subjects_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.BirthDay).HasColumnName("birth_day");
             entity.Property(e => e.Inn).HasColumnName("inn");
@@ -651,10 +654,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_subjects_documents_pkey");
 
-            entity.ToTable("te_subjects_documents", _schema);
+            entity.ToTable("te_subjects_documents", "qbchv3");
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.te_subjects_documents_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.te_subjects_documents_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.CountryCode).HasColumnName("country_code");
             entity.Property(e => e.DocDateIssue).HasColumnName("doc_date_issue");
@@ -682,10 +685,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("te_subjects_full_name_pkey");
 
-            entity.ToTable("te_subjects_full_name", _schema);
+            entity.ToTable("te_subjects_full_name", "qbchv3");
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.te_subjects_full_name_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.te_subjects_full_name_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.FirstName).HasColumnName("first_name");
             entity.Property(e => e.Inserted)
@@ -706,10 +709,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("tr_abonents_pkey");
 
-            entity.ToTable("tr_abonents", _schema, tb => tb.HasComment("Список абонентов"));
+            entity.ToTable("tr_abonents", "qbchv3", tb => tb.HasComment("Список абонентов"));
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.tr_abonents_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.tr_abonents_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.Email).HasColumnName("email");
             entity.Property(e => e.FullName).HasColumnName("full_name");
@@ -732,10 +735,10 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("tr_abonent_certificates_pkey");
 
-            entity.ToTable("tr_abonent_certificates", _schema, tb => tb.HasComment("Список сертификатов связанных с абонентом"));
+            entity.ToTable("tr_abonent_certificates", "qbchv3", tb => tb.HasComment("Список сертификатов связанных с абонентом"));
 
             entity.Property(e => e.KeyId)
-                .HasDefaultValueSql($"nextval('{_schema}.tr_abonent_certificates_key_id_seq1'::regclass)")
+                .HasDefaultValueSql("nextval('qbchv3.tr_abonent_certificates_key_id_seq1'::regclass)")
                 .HasColumnName("key_id");
             entity.Property(e => e.AbonentId).HasColumnName("abonent_id");
             entity.Property(e => e.ExpirationDate)
@@ -760,7 +763,7 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("tr_qbch_response_types_pk");
 
-            entity.ToTable("tr_amp_response_types", _schema, tb => tb.HasComment("Тип ответа. Результативный/не результативный"));
+            entity.ToTable("tr_amp_response_types", "qbchv3", tb => tb.HasComment("Тип ответа. Результативный/не результативный"));
 
             entity.Property(e => e.KeyId)
                 .ValueGeneratedNever()
@@ -773,7 +776,7 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("tr_dlrequest_types_pk");
 
-            entity.ToTable("tr_dlrequest_types", _schema, tb => tb.HasComment("Тип запроса\r\n1 = Только наши данные\r\n2 = Одно окно (Нужно собирать со всех КБКИ)"));
+            entity.ToTable("tr_dlrequest_types", "qbchv3", tb => tb.HasComment("Тип запроса\r\n1 = Только наши данные\r\n2 = Одно окно (Нужно собирать со всех КБКИ)"));
 
             entity.Property(e => e.KeyId)
                 .ValueGeneratedNever()
@@ -785,7 +788,7 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("tr_document_types_pk");
 
-            entity.ToTable("tr_document_types", _schema, tb => tb.HasComment("Типы документов"));
+            entity.ToTable("tr_document_types", "qbchv3", tb => tb.HasComment("Типы документов"));
 
             entity.Property(e => e.KeyId).HasColumnName("key_id");
             entity.Property(e => e.DocDescription).HasColumnName("doc_description");
@@ -795,7 +798,7 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("tr_error_codes_pkey");
 
-            entity.ToTable("tr_error_codes", _schema, tb => tb.HasComment("Коды ошибок согласно документации\r\n+ добавленные коды 500 и 0"));
+            entity.ToTable("tr_error_codes", "qbchv3", tb => tb.HasComment("Коды ошибок согласно документации\r\n+ добавленные коды 500 и 0"));
 
             entity.Property(e => e.KeyId)
                 .ValueGeneratedNever()
@@ -808,7 +811,7 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("tr_information_codes_pk");
 
-            entity.ToTable("tr_information_codes", _schema);
+            entity.ToTable("tr_information_codes", "qbchv3");
 
             entity.Property(e => e.KeyId)
                 .ValueGeneratedNever()
@@ -820,7 +823,7 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("tr_request_modes_pk");
 
-            entity.ToTable("tr_request_modes", _schema);
+            entity.ToTable("tr_request_modes", "qbchv3");
 
             entity.Property(e => e.KeyId)
                 .ValueGeneratedNever()
@@ -832,7 +835,7 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("tr_services_pkey");
 
-            entity.ToTable("tr_services", _schema);
+            entity.ToTable("tr_services", "qbchv3");
 
             entity.Property(e => e.KeyId)
                 .ValueGeneratedNever()
@@ -845,7 +848,7 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("newtable_pk");
 
-            entity.ToTable("tr_sp_response_type", _schema);
+            entity.ToTable("tr_sp_response_type", "qbchv3");
 
             entity.Property(e => e.KeyId)
                 .ValueGeneratedNever()
@@ -857,34 +860,83 @@ public partial class QbchContext : DbContext
         {
             entity.HasKey(e => e.KeyId).HasName("tr_user_types_pkey");
 
-            entity.ToTable("tr_user_types", _schema);
+            entity.ToTable("tr_user_types", "qbchv3");
 
             entity.Property(e => e.KeyId)
                 .ValueGeneratedNever()
                 .HasColumnName("key_id");
             entity.Property(e => e.Description).HasColumnName("description");
         });
-        modelBuilder.HasSequence("td_permissions_key_id_seq", _schema).HasMax(2147483647L);
-        modelBuilder.HasSequence("td_users_key_id_seq", _schema);
-        modelBuilder.HasSequence("te_cert_manage_key_id_seq", _schema);
-        modelBuilder.HasSequence("te_dlanswers_key_id_seq", _schema);
-        modelBuilder.HasSequence("te_dlputanswers_key_id_seq", _schema);
-        modelBuilder.HasSequence("te_dlputs_key_id_seq", _schema);
-        modelBuilder.HasSequence("te_dlrequests_key_id_seq", _schema);
-        modelBuilder.HasSequence("te_qbch_dlanswers_id_seq", _schema);
-        modelBuilder.HasSequence("te_qbch_dlrequests_id_seq", _schema);
-        modelBuilder.HasSequence("te_qbch_dlrequests_key_id_seq", _schema);
-        modelBuilder.HasSequence("te_requests_key_id_seq", _schema);
-        modelBuilder.HasSequence("te_responses_key_id_seq", _schema);
-        modelBuilder.HasSequence("te_subjects_documents_key_id_seq", _schema);
-        modelBuilder.HasSequence("te_subjects_full_name_key_id_seq", _schema);
-        modelBuilder.HasSequence("te_subjects_key_id_seq", _schema);
-        modelBuilder.HasSequence("tr_abonent_certificates_key_id_seq", _schema).HasMax(2147483647L);
-        modelBuilder.HasSequence("tr_abonents_key_id_seq", _schema).HasMax(2147483647L);
+
+        modelBuilder.Entity<TrUserTypeCode>(entity =>
+        {
+            entity.HasKey(e => e.Code).HasName("tr_user_type_code_pkey");
+
+            entity.ToTable("tr_user_type_code", "qbchv3");
+
+            entity.Property(e => e.Code)
+                .ValueGeneratedNever()
+                .HasColumnName("code");
+            entity.Property(e => e.Description).HasColumnName("description");
+        });
+        modelBuilder.Entity<TeConsentPurpose>(entity =>
+        {
+            entity.HasKey(e => e.KeyId).HasName("te_consent_purposes_pk");
+
+            entity.ToTable("te_consent_purposes", "qbchv3");
+
+            entity.Property(e => e.KeyId)
+                .HasDefaultValueSql("nextval('qbchv3.te_consent_purposes_id_seq'::regclass)")
+                .HasColumnName("id");
+            entity.Property(e => e.PurposeId).HasColumnName("purpose_id");
+            entity.Property(e => e.RequestId).HasColumnName("request_id");
+
+            //entity.HasOne(d => d.Request).WithMany(p => p.TeConsentPurposes)
+            //    .HasForeignKey(d => d.RequestId)
+            //    .OnDelete(DeleteBehavior.ClientSetNull)
+            //    .HasConstraintName("te_consent_purposes_request_fk");
+        });
+
+        modelBuilder.Entity<TeRequestPurpose>(entity =>
+        {
+            entity.HasKey(e => e.KeyId).HasName("te_request_purposes_pk");
+
+            entity.ToTable("te_request_purposes", "qbchv3");
+
+            entity.Property(e => e.KeyId)
+                .HasDefaultValueSql("nextval('qbchv3.te_request_purposes_id_seq'::regclass)")
+                .HasColumnName("id");
+            entity.Property(e => e.PurposeId).HasColumnName("purpose_id");
+            entity.Property(e => e.RequestId).HasColumnName("request_id");
+
+            //entity.HasOne(d => d.Request).WithMany(p => p.TeRequestPurposes)
+            //    .HasForeignKey(d => d.RequestId)
+            //    .OnDelete(DeleteBehavior.ClientSetNull)
+            //    .HasConstraintName("te_request_purposes_request_fk");
+        });
+
+        modelBuilder.HasSequence("td_permissions_key_id_seq", "qbchv3").HasMax(2147483647L);
+        modelBuilder.HasSequence("td_users_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_consent_purposes_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_request_purposes_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_cert_manage_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_dlanswers_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_dlputanswers_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_dlputs_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_dlrequests_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_qbch_dlanswers_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_qbch_dlrequests_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_qbch_dlrequests_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_requests_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_responses_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_subjects_documents_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_subjects_full_name_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("te_subjects_key_id_seq", "qbchv3");
+        modelBuilder.HasSequence("tr_abonent_certificates_key_id_seq", "qbchv3").HasMax(2147483647L);
+        modelBuilder.HasSequence("tr_abonents_key_id_seq", "qbchv3").HasMax(2147483647L);
 
         OnModelCreatingPartial(modelBuilder);
     }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder);
-
 }
