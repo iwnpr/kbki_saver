@@ -23,6 +23,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
     private readonly ICacheService _cacheService = cacheService;
     private readonly List<QBCHRequisite> _bureauList = requisits.GetBureaList();
     private const string OurBureaName = "BKICI";
+    private const int ErrorXsdSchemaValidationCode = 9;
 
     private static DateTime? GetDateTimeValue(string? value, string pattern = "dd.MM.yyyy HH:mm:ss:ffff")
         => DateTime.TryParseExact(value, pattern, CultureInfo.InvariantCulture, DateTimeStyles.None, out var result) ? result : null;
@@ -237,13 +238,19 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
             _logger.LogCritical("Не удалось считать данные из Redis: {hashset}", hashset);
             return false;
         }
-        var requestXml = hashset.FirstOrDefault(x => x.Name == "request_xml").Value.ToString();
-        var request = TryDeserialize<ЗапросСведений>(requestXml);
-
-        if (request is null)
-            _logger.LogError("Не удалось считать данные блока {block}, {key}", nameof(ЗапросСведений), hashKey);
 
         var errorCode = int.TryParse(hashset.FirstOrDefault(x => x.Name == "error_code").Value.ToString(), out var parsedError) ? parsedError : 0;
+        var requestBytes = hashset.FirstOrDefault(x => x.Name == "request_xml").Value;
+        var requestDoc = TryLoadXDocument(requestBytes);
+        var root = requestDoc?.Root;
+
+        ЗапросСведений? request = null;
+
+        if (errorCode != ErrorXsdSchemaValidationCode)
+        {
+            request = TryDeserialize<ЗапросСведений>(requestDoc?.ToString());
+        }
+
         var trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
 
         var dlrequest = new TeDlrequest
@@ -259,10 +266,10 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
             ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
             ErrorCode = errorCode,
             ErrorMessage = hashset.FirstOrDefault(x => x.Name == "error_message").Value,
-            RequestId = request?.ИдентификаторЗапроса,
-            InformationCode = request is not null ? int.Parse(XmlEnumHelper.GetXmlEnumValue(request.КодСведений)) : null,
-            RequestMode = request is not null ? int.Parse(XmlEnumHelper.GetXmlEnumValue(request.РежимЗапроса)) : null,
-            RequestType = request is not null ? int.Parse(XmlEnumHelper.GetXmlEnumValue(request.ТипЗапроса)) : null,
+            RequestId = root?.Attribute("ИдентификаторЗапроса")?.Value,
+            InformationCode = GetIntAttr(root, "КодСведений"),
+            RequestMode = GetIntAttr(root, "РежимЗапроса"),
+            RequestType = GetIntAttr(root, "ТипЗапроса"),
             QbchTasksEndDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "qbch_tasks_end_date_time").Value.ToString()),
             QbchTasksResultXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "qbch_tasks_aggregate_xml").Value),
             ResponseSignedData = hashset.FirstOrDefault(x => x.Name == "response_signed_data").Value,
@@ -314,6 +321,20 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
 
         return await SaveAsync(hashKey);
     }
+
+    private static XDocument? TryLoadXDocument(byte[]? bytes)
+    {
+        try
+        {
+            return bytes is not null ? XDocument.Load(new MemoryStream(bytes)) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static int? GetIntAttr(XElement? root, string name) => int.TryParse(root?.Attribute(name)?.Value, out var parsed) ? parsed : null;
 
     public async Task<bool> CreateDlAnswerV3(string hashKey, HashEntry[]? hashset, bool checkAlreadySaved = false)
     {

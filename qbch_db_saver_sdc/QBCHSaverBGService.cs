@@ -67,7 +67,6 @@ namespace qbch_db_saver_sdc
                 o.GetRequiredService<ICacheService>(),
                 o.GetRequiredService<ILogger<SaverService>>(),
                 producer,
-                o.GetRequiredService<IRepository>(),
                 o.GetRequiredService<IRepositoryV3>(),
                 o.GetRequiredService<IConfiguration>(),
                 errorTopic));
@@ -75,7 +74,6 @@ namespace qbch_db_saver_sdc
             services.AddSingleton<IXmlService, XmlService>();
 
             services.AddTransient<IRepositoryV3, RepositoryV3>();
-            services.AddTransient<IRepository, Repository>();
 
             services.AddSingleton<IBKIRequisitsHandler, BKIRequsits>();
             services.AddLogging(builder => builder.AddSerilog(new LoggerConfiguration().ReadFrom.Configuration(configuration).CreateLogger()));

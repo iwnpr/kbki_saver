@@ -20,7 +20,6 @@ namespace db_lib.Services.Implementations
     ICacheService cacheService,
     ILogger<SaverService> logger,
     IProducer<Null, string> producer,
-    IRepository repositoryV2,
     IRepositoryV3 repositoryV3,
     IConfiguration config,
     string? errorTopic) : ISaverService
@@ -30,7 +29,6 @@ namespace db_lib.Services.Implementations
         private readonly string? _errorTopic = errorTopic;
         private readonly IProducer<Null, string> _producer = producer;
         private readonly IRepositoryV3 _repositoryV3 = repositoryV3;
-        private readonly IRepository _repositoryV2 = repositoryV2;
         private readonly IEnumerable<string> BKIPSRNList = config.GetSection("QBCH").GetChildren().Select(x => x.GetValue<string>("Ogrn") ?? string.Empty);
         private readonly int _DlAnswerExpirationMin = config.GetValue<int>("RedisCache:QBCHRequestExpirationMin");
         private readonly int _DlPutExpirationMin = config.GetValue<int>("RedisCache:DlPutExpirationMin");
@@ -109,25 +107,6 @@ namespace db_lib.Services.Implementations
         private const int ErrorTopicHandlerRetryDelayMilliseconds = 5000;
 
 
-        private static bool IsV3(HashEntry[]? hashset)
-        {
-            if (hashset is null)
-                return false;
-
-            var apiVersion = hashset.FirstOrDefault(x => x.Name == ApiVersionField).Value.ToString();
-            var contractVersion = hashset.FirstOrDefault(x => x.Name == ContractVersionField).Value.ToString();
-
-            if (IsVersion3X(apiVersion) || IsVersion3X(contractVersion))
-                return true;
-
-            var xml = hashset.FirstOrDefault(x => x.Name == RequestXmlField).Value.ToString();
-            xml = string.IsNullOrWhiteSpace(xml)
-                ? hashset.FirstOrDefault(x => x.Name == ResponseXmlField).Value.ToString()
-                : xml;
-
-            return !string.IsNullOrWhiteSpace(xml) && xml.Contains("Версия=\"3.", StringComparison.OrdinalIgnoreCase);
-        }
-
         private static bool IsVersion3X(string? version)
     => !string.IsNullOrWhiteSpace(version) && version.StartsWith("3.", StringComparison.Ordinal);
 
@@ -198,17 +177,7 @@ namespace db_lib.Services.Implementations
                     if (!IsReadyToSave(hashset))
                         break;
 
-                    if (IsV3(hashset))
-                    {
-                        if (await _repositoryV3.CreateDlRequestV3(key, hashset))
-                        {
-                            await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
-                            return;
-                        }
-                        break;
-                    }
-
-                    if (await _repositoryV2.CreateDlRequest(key, hashset))
+                    if (await _repositoryV3.CreateDlRequestV3(key, hashset))
                     {
                         await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                         return;
@@ -220,26 +189,16 @@ namespace db_lib.Services.Implementations
                     if (hashset is null)
                         break;
 
-                    if (IsV3(hashset))
-                    {
-                        if (await _repositoryV3.CreateDlAnswerV3(key, hashset))
-                        {
-                            await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
-                            return;
-                        }
-                        break;
-                    }
-
-                    if (await _repositoryV2.CreateDlAnswer(key, hashset))
+                    if (await _repositoryV3.CreateDlAnswerV3(key, hashset))
                     {
                         await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
                         return;
                     }
-
                     break;
 
                 case RequestTypeDlPut:
-                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutV3(key, hashset))
+
+                    if (await _repositoryV3.CreateDlPutV3(key, hashset))
                     {
                         await _cacheService.SetKeyExpirationInMinutes(key, _DlPutExpirationMin);
                         return;
@@ -247,7 +206,8 @@ namespace db_lib.Services.Implementations
                     break;
 
                 case RequestTypeDlPutAnswer:
-                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutAnswerV3(key, hashset))
+
+                    if (await _repositoryV3.CreateDlPutAnswerV3(key, hashset))
                     {
                         await _cacheService.SetKeyExpirationInMinutes(key, _DlPutAnswerExpirationMin);
                         return;
@@ -290,21 +250,13 @@ namespace db_lib.Services.Implementations
 
                             if (IsReadyToSave(hashset))
                             {
-                                if (IsV3(hashset))
-                                {
-                                    if (await _repositoryV3.CreateDlRequestV3(key, hashset, checkAlreadySaved: true))
-                                    {
-                                        await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
-                                        return;
-                                    }
-                                    break;
-                                }
 
-                                if (await _repositoryV2.CreateDlRequest(key, hashset, checkAlreadySaved: true))
+                                if (await _repositoryV3.CreateDlRequestV3(key, hashset, checkAlreadySaved: true))
                                 {
                                     await _cacheService.ClearDLRequestHash(key, hashset, BKIPSRNList);
                                     return;
                                 }
+                                break;
                             }
 
                             IsCancelled = hashset.Any(x => x.Name == CancellationFlagField);
@@ -333,16 +285,8 @@ namespace db_lib.Services.Implementations
 
                         _logger.LogDebug("Данные из Redis: {hashset}, {key}", string.Join("; ", hashset.Select(x => $"{x.Name}={x.Value}")), key);
 
-                        if (IsV3(hashset))
-                        {
-                            if (await _repositoryV3.CreateDlAnswerV3(key, hashset, checkAlreadySaved: true))
-                            {
-                                await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
-                                return;
-                            }
-                        }
 
-                        if (await _repositoryV2.CreateDlAnswer(key, hashset, checkAlreadySaved: true))
+                        if (await _repositoryV3.CreateDlAnswerV3(key, hashset, checkAlreadySaved: true))
                         {
                             await _cacheService.SetKeyExpirationInMinutes(key, _DlAnswerExpirationMin);
                             return;
@@ -358,11 +302,6 @@ namespace db_lib.Services.Implementations
                         _logger.LogError("Redis hash не найден для ключа {key}", key);
                         break;
                     }
-                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutV3(key, hashset, checkAlreadySaved: true))
-                    {
-                        await _cacheService.SetKeyExpirationInMinutes(key, _DlPutExpirationMin);
-                        return;
-                    }
                     break;
 
                 case RequestTypeDlPutAnswer:
@@ -371,11 +310,6 @@ namespace db_lib.Services.Implementations
                     {
                         _logger.LogError("Redis hash не найден для ключа {key}", key);
                         break;
-                    }
-                    if (IsV3(hashset) && await _repositoryV3.CreateDlPutAnswerV3(key, hashset, checkAlreadySaved: true))
-                    {
-                        await _cacheService.SetKeyExpirationInMinutes(key, _DlPutAnswerExpirationMin);
-                        return;
                     }
                     break;
 
