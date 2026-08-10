@@ -10,6 +10,7 @@ using QBCHService_lib.Models.DTOs;
 using StackExchange.Redis;
 using System.Globalization;
 using System.Text.Json;
+using System.Xml;
 using System.Xml.Linq;
 using Xml_service_lib;
 
@@ -28,16 +29,21 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
     private static DateTime? GetDateTimeValue(string? value, string pattern = "dd.MM.yyyy HH:mm:ss:ffff")
         => DateTime.TryParseExact(value, pattern, CultureInfo.InvariantCulture, DateTimeStyles.None, out var result) ? result : null;
 
-    private static string? TryParseXmlBytesToString(byte[]? bytes)
+    private string? TryParseXmlBytesToString(byte[]? bytes)
     {
         try
         {
-            return bytes is not null
-                ? XDocument.Load(new MemoryStream(bytes)).ToString()
-                : null;
+            if(bytes is null)
+                return null;
+
+            using var stream = new MemoryStream(bytes);
+            using var reader = XmlReader.Create(stream);
+            reader.MoveToContent();
+            return reader.ReadOuterXml();
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Ошибка преобразования XML из массива байтов V3");
             return null;
         }
     }
@@ -241,14 +247,14 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
 
         var errorCode = int.TryParse(hashset.FirstOrDefault(x => x.Name == "error_code").Value.ToString(), out var parsedError) ? parsedError : 0;
         var requestBytes = hashset.FirstOrDefault(x => x.Name == "request_xml").Value;
-        var requestDoc = TryLoadXDocument(requestBytes);
-        var root = requestDoc?.Root;
+        var requestXmlData = TryLoadRequestXml(requestBytes);
+        var requestXml = requestXmlData?.Xml;
 
         ЗапросСведений? request = null;
 
         if (errorCode != ErrorXsdSchemaValidationCode)
         {
-            request = TryDeserialize<ЗапросСведений>(requestDoc?.ToString());
+            request = TryDeserialize<ЗапросСведений>(requestXml);
         }
 
         var trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
@@ -262,14 +268,14 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
             RequestCertificateThumbprint = hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString(),
             RequestDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "request_date_time").Value.ToString()) ?? DateTime.Now,
             RequestSignedData = hashset.FirstOrDefault(x => x.Name == "request_signed_data").Value,
-            RequestXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "request_xml").Value),
+            RequestXml = requestXml,
             ValidationDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "validation_date_time").Value.ToString()),
             ErrorCode = errorCode,
             ErrorMessage = hashset.FirstOrDefault(x => x.Name == "error_message").Value,
-            RequestId = root?.Attribute("ИдентификаторЗапроса")?.Value,
-            InformationCode = GetIntAttr(root, "КодСведений"),
-            RequestMode = GetIntAttr(root, "РежимЗапроса"),
-            RequestType = GetIntAttr(root, "ТипЗапроса"),
+            RequestId = requestXmlData?.RequestId,
+            InformationCode = requestXmlData?.InformationCode,
+            RequestMode = requestXmlData?.RequestMode,
+            RequestType = requestXmlData?.RequestType,
             QbchTasksEndDateTime = GetDateTimeValue(hashset.FirstOrDefault(x => x.Name == "qbch_tasks_end_date_time").Value.ToString()),
             QbchTasksResultXml = TryParseXmlBytesToString(hashset.FirstOrDefault(x => x.Name == "qbch_tasks_aggregate_xml").Value),
             ResponseSignedData = hashset.FirstOrDefault(x => x.Name == "response_signed_data").Value,
@@ -322,19 +328,35 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         return await SaveAsync(hashKey);
     }
 
-    private static XDocument? TryLoadXDocument(byte[]? bytes)
+    private RequestXmlData? TryLoadRequestXml(byte[]? bytes)
     {
         try
         {
-            return bytes is not null ? XDocument.Load(new MemoryStream(bytes)) : null;
+            if (bytes is null)
+                return null;
+
+            using var stream = new MemoryStream(bytes);
+            using var reader = XmlReader.Create(stream);
+            reader.MoveToContent();
+
+            var requestId = reader.GetAttribute("ИдентификаторЗапроса");
+            var informationCode = GetNullableIntValue(reader.GetAttribute("КодСведений"));
+            var requestMode = GetNullableIntValue(reader.GetAttribute("РежимЗапроса"));
+            var requestType = GetNullableIntValue(reader.GetAttribute("ТипЗапроса"));
+            var xml = reader.ReadOuterXml();
+
+            return new RequestXmlData(xml, requestId, informationCode, requestMode, requestType);
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "Ошибка разбора XML запроса V3");
             return null;
         }
     }
 
-    private static int? GetIntAttr(XElement? root, string name) => int.TryParse(root?.Attribute(name)?.Value, out var parsed) ? parsed : null;
+    private sealed record RequestXmlData(string Xml, string? RequestId, int? InformationCode, int? RequestMode, int? RequestType);
+
+    private static int? GetNullableIntValue(string? value) => int.TryParse(value, out var result) ? result : null;
 
     public async Task<bool> CreateDlAnswerV3(string hashKey, HashEntry[]? hashset, bool checkAlreadySaved = false)
     {
