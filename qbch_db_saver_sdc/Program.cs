@@ -138,8 +138,9 @@ else
                 if (Is500)
                     _repository.SaveCriticalError(key).Wait();
 
-                if (isErrorApp)
+                else if (isErrorApp)
                     _repository.ErrorTopicHandler(key).Wait();
+
                 else
                     _repository.TopicHandler(key).Wait();
 

@@ -129,8 +129,9 @@ namespace qbch_db_saver_sdc
                             if (Is500)
                                 await _repository.SaveCriticalError(key);
 
-                            if (isErrorApp)
+                            else if (isErrorApp)
                                 await _repository.ErrorTopicHandler(key);
+
                             else
                                 await _repository.TopicHandler(key);
                         }

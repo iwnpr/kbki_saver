@@ -119,17 +119,21 @@ namespace db_lib.Services.Implementations
             await ProduceToEventTopic(requestXml.Value.ToString(), key);
         }
 
-        public async Task SaveCriticalError(string key)
+        public async Task SaveCriticalError(string message)
         {
-            var json = JsonSerializer.Deserialize<ApplicationError>(key);
+            ApplicationError? error = null;
 
-            if (json is null)
+            try
             {
-                _logger.LogError("Ошибка десериализапции json {key}", key);
-                return;
+                error = JsonSerializer.Deserialize<ApplicationError>(message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "Не удалось разобрать сообщение об ошибке");
             }
 
-            //await ExecuteSaving(key, json.ServiceName, json.guid, json);
+            // Разобралось - в DLQ уходит разобранная ошибка, если нет - сырое сообщение.
+            await SendToDlqAsync(error is not null ? JsonSerializer.Serialize(error) : message);
         }
 
         /// <summary>
