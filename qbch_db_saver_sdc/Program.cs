@@ -131,6 +131,15 @@ else
             ISaverService _repository = scope.GetRequiredService<ISaverService>();
             cr = consumer.Consume();
             key = cr.Message.Value;
+
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                _logger.LogWarning("Получено пустое сообщение Partition:{prt} Offset:{offset} — пропущено",
+                    cr.Partition.Value, cr.Offset.Value);
+                consumer.Commit(cr);
+                continue;
+            }
+
             Is500 = key.Split(':')[0] != "QBCH";
 
             try

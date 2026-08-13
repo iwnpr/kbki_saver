@@ -9,6 +9,7 @@ using QBCH_lib.CommonTypes.Api;
 using QBCHService_lib.Models.DTOs;
 using StackExchange.Redis;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
@@ -249,14 +250,6 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         var requestBytes = hashset.FirstOrDefault(x => x.Name == "request_xml").Value;
         var requestXmlData = TryLoadRequestXml(requestBytes);
         var requestXml = requestXmlData?.Xml;
-
-        ЗапросСведений? request = null;
-
-        if (errorCode != ErrorXsdSchemaValidationCode)
-        {
-            request = TryDeserialize<ЗапросСведений>(requestXml);
-        }
-
         var trAbonent = await GetAbonentByThumbprint(hashset.FirstOrDefault(x => x.Name == "request_certificate_thumbprint").Value.ToString());
 
         var dlrequest = new TeDlrequest
@@ -284,6 +277,13 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         };
 
         await _context.TeDlrequests.AddAsync(dlrequest);
+
+        ЗапросСведений? request = null;
+
+        if (errorCode != ErrorXsdSchemaValidationCode)
+        {
+            request = TryDeserialize<ЗапросСведений>(requestXml);
+        }
 
         if (request is not null && (errorCode == 0 || errorCode == 12))
         {
@@ -336,14 +336,21 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
                 return null;
 
             using var stream = new MemoryStream(bytes);
-            using var reader = XmlReader.Create(stream);
-            reader.MoveToContent();
+            using var streamReader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            var xml = streamReader.ReadToEnd();
 
-            var requestId = reader.GetAttribute("ИдентификаторЗапроса");
-            var informationCode = GetNullableIntValue(reader.GetAttribute("КодСведений"));
-            var requestMode = GetNullableIntValue(reader.GetAttribute("РежимЗапроса"));
-            var requestType = GetNullableIntValue(reader.GetAttribute("ТипЗапроса"));
-            var xml = reader.ReadOuterXml();
+            string? requestId = null;
+            int? informationCode = null, requestMode = null, requestType = null;
+
+            using var xmlReader = XmlReader.Create(new StringReader(xml));
+
+            if (xmlReader.MoveToContent() == XmlNodeType.Element)
+            {
+                requestId = xmlReader.GetAttribute("ИдентификаторЗапроса");
+                informationCode = GetNullableIntValue(xmlReader.GetAttribute("КодСведений"));
+                requestMode = GetNullableIntValue(xmlReader.GetAttribute("РежимЗапроса"));
+                requestType = GetNullableIntValue(xmlReader.GetAttribute("ТипЗапроса"));
+            }
 
             return new RequestXmlData(xml, requestId, informationCode, requestMode, requestType);
         }

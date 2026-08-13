@@ -106,34 +106,17 @@ namespace db_lib.Services.Implementations
         /// </summary>
         private const int ErrorTopicHandlerRetryDelayMilliseconds = 5000;
 
-
-        private static bool IsVersion3X(string? version)
-    => !string.IsNullOrWhiteSpace(version) && version.StartsWith("3.", StringComparison.Ordinal);
-
-        private async Task ProduceRequestXmlIfExists(HashEntry[] hashset, string key)
+        public async Task SaveCriticalError(string key)
         {
-            var requestXml = hashset.FirstOrDefault(x => x.Name == RequestXmlField);
-            if (!requestXml.Name.HasValue || requestXml.Value.IsNullOrEmpty)
+            var json = JsonSerializer.Deserialize<ApplicationError>(key);
+
+            if (json is null)
+            {
+                _logger.LogError("Ошибка десериализапции json {key}", key);
                 return;
-
-            await ProduceToEventTopic(requestXml.Value.ToString(), key);
-        }
-
-        public async Task SaveCriticalError(string message)
-        {
-            ApplicationError? error = null;
-
-            try
-            {
-                error = JsonSerializer.Deserialize<ApplicationError>(message);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogCritical(ex, "Не удалось разобрать сообщение об ошибке");
             }
 
-            // Разобралось - в DLQ уходит разобранная ошибка, если нет - сырое сообщение.
-            await SendToDlqAsync(error is not null ? JsonSerializer.Serialize(error) : message);
+            //await ExecuteSaving(key, json.ServiceName, json.guid, json);
         }
 
         /// <summary>

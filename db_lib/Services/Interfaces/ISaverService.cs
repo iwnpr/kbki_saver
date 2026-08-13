@@ -29,6 +29,6 @@ namespace db_lib.Services.Interfaces
         /// </summary>
         /// <param name="key"></param>
         /// <returns></returns>
-        Task SaveCriticalError(string message);
+        Task SaveCriticalError(string key);
     }
 }
