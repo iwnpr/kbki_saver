@@ -9,10 +9,11 @@ using QBCH_lib.CommonTypes.Api;
 using QBCHService_lib.Models.DTOs;
 using StackExchange.Redis;
 using System.Globalization;
+using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Xml;
-using System.Xml.Linq;
 using Xml_service_lib;
 
 namespace db_lib.Services.Implementations.V3;
@@ -32,19 +33,39 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
 
     private string? TryParseXmlBytesToString(byte[]? bytes)
     {
+        if (bytes is null)
+            return null;
+
         try
         {
-            if(bytes is null)
-                return null;
-
             using var stream = new MemoryStream(bytes);
             using var reader = XmlReader.Create(stream);
             reader.MoveToContent();
+
             return reader.ReadOuterXml();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ошибка преобразования XML из массива байтов V3");
+            _logger.LogError(ex, "Ошибка преобразования XML из массива байтов V3, будет сохранён исходный текст");
+            return DecodeBytesToString(bytes);
+        }
+    }
+
+    private string? DecodeBytesToString(byte[]? bytes)
+    {
+        if (bytes is null || bytes.Length == 0)
+            return null;
+
+        try
+        {
+            using var stream = new MemoryStream(bytes);
+            using var streamReader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            var text = streamReader.ReadToEnd();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Ошибка преобразования массива байтов в текст V3");
             return null;
         }
     }
@@ -330,36 +351,109 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
 
     private RequestXmlData? TryLoadRequestXml(byte[]? bytes)
     {
+        var xml = DecodeBytesToString(bytes);
+
+        if (xml is null)
+            return null;
+
         try
         {
-            if (bytes is null)
-                return null;
-
-            using var stream = new MemoryStream(bytes);
-            using var streamReader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            var xml = streamReader.ReadToEnd();
-
-            string? requestId = null;
-            int? informationCode = null, requestMode = null, requestType = null;
-
             using var xmlReader = XmlReader.Create(new StringReader(xml));
 
             if (xmlReader.MoveToContent() == XmlNodeType.Element)
             {
-                requestId = xmlReader.GetAttribute("ИдентификаторЗапроса");
-                informationCode = GetNullableIntValue(xmlReader.GetAttribute("КодСведений"));
-                requestMode = GetNullableIntValue(xmlReader.GetAttribute("РежимЗапроса"));
-                requestType = GetNullableIntValue(xmlReader.GetAttribute("ТипЗапроса"));
+
+                return new RequestXmlData(xml,
+                    xmlReader.GetAttribute("ИдентификаторЗапроса"),
+                    GetNullableIntValue(xmlReader.GetAttribute("КодСведений")),
+                    GetNullableIntValue(xmlReader.GetAttribute("РежимЗапроса")),
+                    GetNullableIntValue(xmlReader.GetAttribute("ТипЗапроса")));
             }
 
-            return new RequestXmlData(xml, requestId, informationCode, requestMode, requestType);
+            _logger.LogWarning("В XML запроса V3 не найден корневой элемент");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ошибка разбора XML запроса V3");
-            return null;
+            _logger.LogError(ex, "Ошибка разбора XML запроса V3, атрибуты будут прочитаны из корневого тега");
         }
+
+        // XML нечитаемый для XmlReader, но сам текст сохранить нужно,
+        // как и атрибуты, если корневой тег читается
+        return ReadRootAttributes(xml);
     }
+
+    private RequestXmlData ReadRootAttributes(string xml)
+    {
+        var rootTag = FindRootStartTag(xml);
+
+        if (rootTag is null)
+            return new RequestXmlData(xml, null, null, null, null);
+
+        var attributes = new Dictionary<string, string>();
+
+        foreach (Match match in AttributeRegex.Matches(rootTag))
+        {
+            attributes.TryAdd(match.Groups["name"].Value, WebUtility.HtmlDecode(match.Groups["value"].Value));
+        }
+
+        return new RequestXmlData(xml,
+            GetAttributeValue(attributes, "ИдентификаторЗапроса"),
+            GetNullableIntValue(GetAttributeValue(attributes, "КодСведений")),
+            GetNullableIntValue(GetAttributeValue(attributes, "РежимЗапроса")),
+            GetNullableIntValue(GetAttributeValue(attributes, "ТипЗапроса")));
+    }
+    /// <summary>
+    /// Возвращает открывающий тег корневого элемента без разбора всего документа.
+    /// Тег может быть оборван, тогда возвращается остаток текста.
+    /// </summary>
+    private static string? FindRootStartTag(string xml)
+    {
+        var position = 0;
+
+        while (position < xml.Length)
+        {
+            var start = xml.IndexOf('<', position);
+            if (start < 0) return null;
+
+            if (xml.AsSpan(start).StartsWith("<?"))
+            {
+                position = SkipTo(xml, start, "?>");
+                continue;
+            }
+
+            if (xml.AsSpan(start).StartsWith("<!--"))
+            {
+                position = SkipTo(xml, start, "-->");
+                continue;
+            }
+
+            // DOCTYPE, CDATA и закрывающие теги до корневого элемента
+            if (xml.AsSpan(start).StartsWith("<!") || xml.AsSpan(start).StartsWith("</"))
+            {
+                position = SkipTo(xml, start, ">");
+                continue;
+            }
+
+            var end = xml.IndexOf('>', start);
+            return end < 0 ? xml[start..] : xml[start..end];
+        }
+
+        return null;
+    }
+
+    private static int SkipTo(string xml, int start, string terminator)
+    {
+        var end = xml.IndexOf(terminator, start, StringComparison.Ordinal);
+        return end < 0 ? xml.Length : end + terminator.Length;
+    }
+
+    private static string? GetAttributeValue(Dictionary<string, string> attributes, string name)
+        => attributes.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
+
+    private static readonly Regex AttributeRegex = new(
+        """(?<name>[^\s=<>"'/]+)\s*=\s*(?:"(?<value>[^"]*)"|'(?<value>[^']*)')""",
+        RegexOptions.Compiled);
+
 
     private sealed record RequestXmlData(string Xml, string? RequestId, int? InformationCode, int? RequestMode, int? RequestType);
 
