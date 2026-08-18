@@ -76,7 +76,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         {
             return _xmlService.Deserialize<T>(value);
         }
-        catch(Exception ex)
+        catch (Exception ex)
         {
             _logger.LogCritical(ex, "Ошибка десериализации блока {block} V3", typeof(T).Name);
         }
@@ -356,104 +356,20 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         if (xml is null)
             return null;
 
-        try
-        {
-            using var xmlReader = XmlReader.Create(new StringReader(xml));
-
-            if (xmlReader.MoveToContent() == XmlNodeType.Element)
-            {
-
-                return new RequestXmlData(xml,
-                    xmlReader.GetAttribute("ИдентификаторЗапроса"),
-                    GetNullableIntValue(xmlReader.GetAttribute("КодСведений")),
-                    GetNullableIntValue(xmlReader.GetAttribute("РежимЗапроса")),
-                    GetNullableIntValue(xmlReader.GetAttribute("ТипЗапроса")));
-            }
-
-            _logger.LogWarning("В XML запроса V3 не найден корневой элемент");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Ошибка разбора XML запроса V3, атрибуты будут прочитаны из корневого тега");
-        }
-
-        // XML нечитаемый для XmlReader, но сам текст сохранить нужно,
-        // как и атрибуты, если корневой тег читается
-        return ReadRootAttributes(xml);
-    }
-
-    private RequestXmlData ReadRootAttributes(string xml)
-    {
-        var rootTag = FindRootStartTag(xml);
-
-        if (rootTag is null)
-            return new RequestXmlData(xml, null, null, null, null);
-
-        var attributes = new Dictionary<string, string>();
-
-        foreach (Match match in AttributeRegex.Matches(rootTag))
-        {
-            attributes.TryAdd(match.Groups["name"].Value, WebUtility.HtmlDecode(match.Groups["value"].Value));
-        }
-
+        // Атрибуты читаем из текста: даже если XML некорректный, запрос и его атрибуты попадут в базу
         return new RequestXmlData(xml,
-            GetAttributeValue(attributes, "ИдентификаторЗапроса"),
-            GetNullableIntValue(GetAttributeValue(attributes, "КодСведений")),
-            GetNullableIntValue(GetAttributeValue(attributes, "РежимЗапроса")),
-            GetNullableIntValue(GetAttributeValue(attributes, "ТипЗапроса")));
+            GetAttributeValue(xml, "ИдентификаторЗапроса"),
+            GetNullableIntValue(GetAttributeValue(xml, "КодСведений")),
+            GetNullableIntValue(GetAttributeValue(xml, "РежимЗапроса")),
+            GetNullableIntValue(GetAttributeValue(xml, "ТипЗапроса")));
     }
-    /// <summary>
-    /// Возвращает открывающий тег корневого элемента без разбора всего документа.
-    /// Тег может быть оборван, тогда возвращается остаток текста.
-    /// </summary>
-    private static string? FindRootStartTag(string xml)
+
+
+    private static string? GetAttributeValue(string xml, string name)
     {
-        var position = 0;
-
-        while (position < xml.Length)
-        {
-            var start = xml.IndexOf('<', position);
-            if (start < 0) return null;
-
-            if (xml.AsSpan(start).StartsWith("<?"))
-            {
-                position = SkipTo(xml, start, "?>");
-                continue;
-            }
-
-            if (xml.AsSpan(start).StartsWith("<!--"))
-            {
-                position = SkipTo(xml, start, "-->");
-                continue;
-            }
-
-            // DOCTYPE, CDATA и закрывающие теги до корневого элемента
-            if (xml.AsSpan(start).StartsWith("<!") || xml.AsSpan(start).StartsWith("</"))
-            {
-                position = SkipTo(xml, start, ">");
-                continue;
-            }
-
-            var end = xml.IndexOf('>', start);
-            return end < 0 ? xml[start..] : xml[start..end];
-        }
-
-        return null;
+        var match = Regex.Match(xml, $"""{name}\s*=\s*["'](?<value>[^"']*)["']""");
+        return match.Success ? match.Groups["value"].Value : null;
     }
-
-    private static int SkipTo(string xml, int start, string terminator)
-    {
-        var end = xml.IndexOf(terminator, start, StringComparison.Ordinal);
-        return end < 0 ? xml.Length : end + terminator.Length;
-    }
-
-    private static string? GetAttributeValue(Dictionary<string, string> attributes, string name)
-        => attributes.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
-
-    private static readonly Regex AttributeRegex = new(
-        """(?<name>[^\s=<>"'/]+)\s*=\s*(?:"(?<value>[^"]*)"|'(?<value>[^']*)')""",
-        RegexOptions.Compiled);
-
 
     private sealed record RequestXmlData(string Xml, string? RequestId, int? InformationCode, int? RequestMode, int? RequestType);
 
