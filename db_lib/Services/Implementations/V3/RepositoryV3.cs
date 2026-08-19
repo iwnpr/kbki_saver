@@ -350,38 +350,71 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
     }
     private RequestXmlData? TryLoadRequestXml(byte[]? bytes)
     {
-        var xml = DecodeBytesToString(bytes);
-
-        if (xml is null)
+        if (bytes is null || bytes.Length == 0)
             return null;
 
-        // Колонка request_xml имеет тип xml: битую разметку PostgreSQL не примет и отклонит
-        // всю строку целиком. Поэтому некорректный XML не сохраняем, а атрибуты читаем из
-        // текста - они попадут в базу в любом случае.
-        var isWellFormed = true;
+        string? requestId = null;
+        string? informationCode = null;
+        string? requestMode = null;
+        string? requestType = null;
+        var attributesRead = false;
+        XmlException? parseError = null;
 
         try
         {
-            using var reader = XmlReader.Create(new StringReader(xml));
+            // Читаем из потока, а не из строки: так учитывается объявленная в прологе кодировка.
+            using var stream = new MemoryStream(bytes);
+            using var reader = XmlReader.Create(stream);
+
+            if (reader.MoveToContent() == XmlNodeType.None)
+                return null;
+
+            requestId = reader.GetAttribute("ИдентификаторЗапроса");
+            informationCode = reader.GetAttribute("КодСведений");
+            requestMode = reader.GetAttribute("РежимЗапроса");
+            requestType = reader.GetAttribute("ТипЗапроса");
+            attributesRead = true;
+
+            // ReadOuterXml разбирает корневой элемент целиком, оставшийся хвост дочитываем,
+            // чтобы разметка за корнем тоже считалась некорректной.
+            var xml = reader.ReadOuterXml();
             while (reader.Read()) { }
+            return BuildRequestXmlData(string.IsNullOrWhiteSpace(xml) ? null : xml,
+                requestId, informationCode, requestMode, requestType);
         }
         catch (XmlException ex)
         {
             _logger.LogWarning(ex, "Некорректный XML запроса V3, будут сохранены только его атрибуты");
-            isWellFormed = false;
+            parseError = ex;
         }
 
-        return new RequestXmlData(isWellFormed ? xml : null,
-            GetAttributeValue(xml, "ИдентификаторЗапроса"),
-            GetNullableIntValue(GetAttributeValue(xml, "КодСведений")),
-            GetNullableIntValue(GetAttributeValue(xml, "РежимЗапроса")),
-            GetNullableIntValue(GetAttributeValue(xml, "ТипЗапроса")));
+        var text = DecodeBytesToString(bytes);
+
+        if (text is null)
+            return null;
+
+        _logger.LogWarning(parseError, "Некорректный XML запроса V3, будут сохранены только его атрибуты");
+
+        // Разметку прочитать не удалось - атрибуты, которые не успели попасть в reader,
+        // достаём из текста регулярным выражением.
+        return BuildRequestXmlData(null,
+            attributesRead ? requestId : GetAttributeValue(text, "ИдентификаторЗапроса"),
+            attributesRead ? informationCode : GetAttributeValue(text, "КодСведений"),
+            attributesRead ? requestMode : GetAttributeValue(text, "РежимЗапроса"),
+            attributesRead ? requestType : GetAttributeValue(text, "ТипЗапроса"));
     }
+
+    private static RequestXmlData BuildRequestXmlData(string? xml, string? requestId, string? informationCode, string? requestMode, string? requestType)
+        => new(xml,
+            requestId,
+            GetNullableIntValue(informationCode),
+            GetNullableIntValue(requestMode),
+            GetNullableIntValue(requestType));
 
 
     private static string? GetAttributeValue(string xml, string name)
     {
-        var match = Regex.Match(xml, $"""{name}\s*=\s*["'](?<value>[^"']*)["']""");
+        var match = Regex.Match(xml, $"""(?<![\w:.-]){name}\s*=\s*["'](?<value>[^"']*)["']""");
         return match.Success ? match.Groups["value"].Value : null;
     }
 
