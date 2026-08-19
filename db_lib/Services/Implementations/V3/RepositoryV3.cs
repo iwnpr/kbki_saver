@@ -348,7 +348,6 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
 
         return await SaveAsync(hashKey);
     }
-
     private RequestXmlData? TryLoadRequestXml(byte[]? bytes)
     {
         var xml = DecodeBytesToString(bytes);
@@ -356,8 +355,23 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         if (xml is null)
             return null;
 
-        // Атрибуты читаем из текста: даже если XML некорректный, запрос и его атрибуты попадут в базу
-        return new RequestXmlData(xml,
+        // Колонка request_xml имеет тип xml: битую разметку PostgreSQL не примет и отклонит
+        // всю строку целиком. Поэтому некорректный XML не сохраняем, а атрибуты читаем из
+        // текста - они попадут в базу в любом случае.
+        var isWellFormed = true;
+
+        try
+        {
+            using var reader = XmlReader.Create(new StringReader(xml));
+            while (reader.Read()) { }
+        }
+        catch (XmlException ex)
+        {
+            _logger.LogWarning(ex, "Некорректный XML запроса V3, будут сохранены только его атрибуты");
+            isWellFormed = false;
+        }
+
+        return new RequestXmlData(isWellFormed ? xml : null,
             GetAttributeValue(xml, "ИдентификаторЗапроса"),
             GetNullableIntValue(GetAttributeValue(xml, "КодСведений")),
             GetNullableIntValue(GetAttributeValue(xml, "РежимЗапроса")),
@@ -371,7 +385,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         return match.Success ? match.Groups["value"].Value : null;
     }
 
-    private sealed record RequestXmlData(string Xml, string? RequestId, int? InformationCode, int? RequestMode, int? RequestType);
+    private sealed record RequestXmlData(string? Xml, string? RequestId, int? InformationCode, int? RequestMode, int? RequestType);
 
     private static int? GetNullableIntValue(string? value) => int.TryParse(value, out var result) ? result : null;
 
