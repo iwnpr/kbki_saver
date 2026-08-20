@@ -47,26 +47,9 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         catch (Exception ex)
         {
             _logger.LogError(ex, "Ошибка преобразования XML из массива байтов V3, будет сохранён исходный текст");
-            return DecodeBytesToString(bytes);
-        }
-    }
 
-    private string? DecodeBytesToString(byte[]? bytes)
-    {
-        if (bytes is null || bytes.Length == 0)
-            return null;
-
-        try
-        {
-            using var stream = new MemoryStream(bytes);
-            using var streamReader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            var text = streamReader.ReadToEnd();
+            var text = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
             return string.IsNullOrWhiteSpace(text) ? null : text;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Ошибка преобразования массива байтов в текст V3");
-            return null;
         }
     }
 
@@ -362,7 +345,6 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
 
         try
         {
-            // Читаем из потока, а не из строки: так учитывается объявленная в прологе кодировка.
             using var stream = new MemoryStream(bytes);
             using var reader = XmlReader.Create(stream);
 
@@ -375,8 +357,6 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
             requestType = reader.GetAttribute("ТипЗапроса");
             attributesRead = true;
 
-            // ReadOuterXml разбирает корневой элемент целиком, оставшийся хвост дочитываем,
-            // чтобы разметка за корнем тоже считалась некорректной.
             var xml = reader.ReadOuterXml();
             while (reader.Read()) { }
             return BuildRequestXmlData(string.IsNullOrWhiteSpace(xml) ? null : xml,
@@ -388,15 +368,13 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
             parseError = ex;
         }
 
-        var text = DecodeBytesToString(bytes);
+        var text = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
 
-        if (text is null)
+        if (string.IsNullOrWhiteSpace(text))
             return null;
 
         _logger.LogWarning(parseError, "Некорректный XML запроса V3, будут сохранены только его атрибуты");
 
-        // Разметку прочитать не удалось - атрибуты, которые не успели попасть в reader,
-        // достаём из текста регулярным выражением.
         return BuildRequestXmlData(null,
             attributesRead ? requestId : GetAttributeValue(text, "ИдентификаторЗапроса"),
             attributesRead ? informationCode : GetAttributeValue(text, "КодСведений"),
