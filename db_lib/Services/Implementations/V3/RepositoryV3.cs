@@ -46,10 +46,10 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ошибка преобразования XML из массива байтов V3, будет сохранён исходный текст");
-
             var text = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
-            return string.IsNullOrWhiteSpace(text) ? null : text;
+            _logger.LogError(ex, "Ошибка преобразования XML из массива байтов V3, значение не будет сохранено");
+
+            return null;
         }
     }
 
@@ -341,7 +341,6 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         string? requestMode = null;
         string? requestType = null;
         var attributesRead = false;
-        XmlException? parseError = null;
 
         try
         {
@@ -359,21 +358,19 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
 
             var xml = reader.ReadOuterXml();
             while (reader.Read()) { }
+
             return BuildRequestXmlData(string.IsNullOrWhiteSpace(xml) ? null : xml,
                 requestId, informationCode, requestMode, requestType);
         }
         catch (XmlException ex)
         {
             _logger.LogWarning(ex, "Некорректный XML запроса V3, будут сохранены только его атрибуты");
-            parseError = ex;
         }
 
         var text = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
 
         if (string.IsNullOrWhiteSpace(text))
             return null;
-
-        _logger.LogWarning(parseError, "Некорректный XML запроса V3, будут сохранены только его атрибуты");
 
         return BuildRequestXmlData(null,
             attributesRead ? requestId : GetAttributeValue(text, "ИдентификаторЗапроса"),
