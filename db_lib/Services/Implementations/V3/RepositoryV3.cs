@@ -46,9 +46,7 @@ public class RepositoryV3(QbchContext context, ILogger<RepositoryV3> logger, IXm
         }
         catch (Exception ex)
         {
-            var text = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
             _logger.LogError(ex, "Ошибка преобразования XML из массива байтов V3, значение не будет сохранено");
-
             return null;
         }
     }
