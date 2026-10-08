@@ -193,7 +193,6 @@ publish/
 PublishScripts/
 
 # NuGet Packages
-*.nupkg
 # NuGet Symbol Packages
 *.snupkg
 # The packages folder can be ignored because of Package Restore
@@ -361,6 +360,19 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/z_tst_console
 
-# Файлы настроек Rider
-.idea
+# Common IntelliJ Platform excludes
+
+## JetBrains Rider / IntelliJ IDE items
+.idea/
+*.sln.iml
+*.suo
+
+# If you use RiderLink for Unreal Engine development
+.idea/RiderLink/
+
+# Keep these if you want to share specific settings with your team
+!.idea/runConfigurations/
+!.idea/indexLayout.xml
+!.idea/vcs.xml
