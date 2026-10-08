@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "db_lib", "db_lib\db_lib.csp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "cache_lib", "cache_lib\cache_lib.csproj", "{DDAFD546-D2DF-408A-9736-D626BFF4A1C7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "qbch_db_restore", "qbch_db_restore\qbch_db_restore.csproj", "{7066BFE2-5883-CE92-D2B7-EAC22E37FC76}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,6 +29,10 @@ Global
 		{DDAFD546-D2DF-408A-9736-D626BFF4A1C7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{DDAFD546-D2DF-408A-9736-D626BFF4A1C7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{DDAFD546-D2DF-408A-9736-D626BFF4A1C7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7066BFE2-5883-CE92-D2B7-EAC22E37FC76}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7066BFE2-5883-CE92-D2B7-EAC22E37FC76}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7066BFE2-5883-CE92-D2B7-EAC22E37FC76}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7066BFE2-5883-CE92-D2B7-EAC22E37FC76}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
